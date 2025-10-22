@@ -430,6 +430,15 @@ class Game {
         // 공격 카드 선택
         if (this.gameManager.selectAttackCards(selectedCards)) {
             soundManager.playCardUse();
+            
+            // 필드 마법 카드 확인
+            const hasFieldMagic = selectedCards.some(c => c.type === 'field-magic');
+            if (hasFieldMagic) {
+                // 필드 마법 사용
+                this.useFieldMagic(selectedCards[0]);
+                return;
+            }
+            
             // 마법 카드가 아니면 대상 선택
             if (!hasMagic) {
                 this.showTargetSelection();
@@ -447,9 +456,113 @@ class Game {
             uiManager.showAlert('카드를 사용할 수 없습니다!');
         }
     }
+    
+    private useFieldMagic(card: any): void {
+        if (!this.gameManager) return;
+        
+        const currentPlayer = this.gameManager.getCurrentPlayer();
+        
+        // 기존 필드 마법 제거
+        const session = this.gameManager.getSession();
+        if (session.fieldMagic) {
+            uiManager.addLogMessage(`기존 필드 마법 [${session.fieldMagic.name}]이(가) 사라졌습니다!`);
+        }
+        
+        // 새 필드 마법 적용
+        session.fieldMagic = {
+            id: card.id,
+            name: card.name,
+            casterId: currentPlayer.id,
+            effect: card.effect,
+            duration: 5  // 5턴 지속
+        };
+        
+        // 정신력 소모
+        currentPlayer.mentalPower = Math.max(0, currentPlayer.mentalPower - card.mentalCost);
+        
+        // 카드 제거
+        const cardIndex = currentPlayer.cards.findIndex(c => c.id === card.id);
+        if (cardIndex !== -1) {
+            currentPlayer.cards.splice(cardIndex, 1);
+        }
+        
+        uiManager.addLogMessage(`${currentPlayer.name}이(가) [${card.name}]을(를) 발동했습니다!`);
+        uiManager.updateFieldMagic(card.name);
+        soundManager.playClick();
+        
+        // 멀티플레이어: 특수 이벤트 전송
+        if (this.isMultiplayer) {
+            socketClient.sendSpecialEvent('field-magic', {
+                card,
+                fieldMagic: session.fieldMagic
+            });
+        }
+        
+        this.updateGameState();
+        
+        // 손패 업데이트
+        const localPlayer = this.gameManager.getLocalPlayer();
+        if (this.handManager) {
+            this.handManager.clearHand();
+            this.handManager.addCards(localPlayer.cards);
+        }
+    }
 
     private showTargetSelection(): void {
         if (!this.gameManager) return;
+
+        const currentPlayer = this.gameManager.getCurrentPlayer();
+        const session = this.gameManager.getSession();
+        
+        // 혼돈의 저주 (RANDOM_TARGET) 또는 혼돈의 소용돌이 필드 마법 체크
+        const hasRandomTargetDebuff = currentPlayer.debuffs.some(
+            d => d.type === 'random-target'
+        );
+        const hasChaosField = session.fieldMagic?.name === '혼돈의 소용돌이';
+        
+        if (hasRandomTargetDebuff || hasChaosField) {
+            // 대상 랜덤 지정
+            const alivePlayers = this.gameManager.getSession().players.filter(
+                p => p.isAlive && p.id !== currentPlayer.id
+            );
+            
+            if (alivePlayers.length === 0) return;
+            
+            const randomTarget = alivePlayers[Math.floor(Math.random() * alivePlayers.length)];
+            
+            if (hasRandomTargetDebuff) {
+                uiManager.showAlert(`혼돈의 저주! 대상이 랜덤으로 지정됩니다: ${randomTarget.name}`);
+            } else {
+                uiManager.showAlert(`혼돈의 소용돌이! 대상이 랜덤으로 지정됩니다: ${randomTarget.name}`);
+            }
+            
+            this.gameManager.selectDefender(randomTarget.id);
+            
+            // 멀티플레이어: 공격 전송
+            if (this.isMultiplayer) {
+                const attackCards = this.gameManager.getSession().attackCards;
+                const totalDamage = attackCards.reduce((sum, card) => 
+                    sum + card.healthDamage + card.mentalDamage, 0);
+                
+                socketClient.sendAttack(
+                    this.currentPlayerId,
+                    randomTarget.id,
+                    attackCards,
+                    totalDamage
+                );
+            }
+            
+            // 방어 카드 선택 대기
+            setTimeout(() => {
+                if (randomTarget.id === this.gameManager!.getLocalPlayer().id) {
+                    this.showDefenseSelection(randomTarget.id);
+                } else {
+                    this.autoDefend(randomTarget.id);
+                }
+            }, 1500);
+            
+            return;
+        }
 
         // 모든 살아있는 플레이어를 대상으로 선택 가능 (자기 자신 포함)
         const alivePlayers = this.gameManager.getSession().players.filter(

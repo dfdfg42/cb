@@ -100,6 +100,22 @@ export class GameManager {
             return false;
         }
 
+        // 필드 마법 카드 확인
+        const fieldMagicCards = cards.filter(c => c.type === CardType.FIELD_MAGIC);
+        if (fieldMagicCards.length > 0) {
+            if (cards.length > 1) {
+                uiManager.showAlert('필드 마법은 단독으로만 사용 가능합니다!');
+                return false;
+            }
+            // 필드 마법은 정신력만 확인하면 됨
+            const mentalCost = fieldMagicCards[0].mentalCost;
+            if (mentalCost > player.mentalPower) {
+                uiManager.showAlert('정신력이 부족합니다!');
+                return false;
+            }
+            return true;
+        }
+
         // 마법 카드는 1장만 가능
         const magicCards = cards.filter(c => c.type === CardType.MAGIC);
         if (magicCards.length > 1) {
@@ -199,6 +215,18 @@ export class GameManager {
             (sum, card) => sum + card.mentalDamage, 0
         );
 
+        // 필드 마법: 화염의 대지 (발동자 공격력 +5)
+        if (this.session.fieldMagic?.name === '화염의 대지' && 
+            this.session.fieldMagic.casterId === attacker.id) {
+            totalHealthDamage += 5;
+        }
+
+        // 필드 마법: 얼음 왕국 (적 공격력 -3)
+        if (this.session.fieldMagic?.name === '얼음 왕국' && 
+            this.session.fieldMagic.casterId !== attacker.id) {
+            totalHealthDamage = Math.max(0, totalHealthDamage - 3);
+        }
+
         // 정신력 소모
         const mentalCost = this.session.attackCards.reduce(
             (sum, card) => sum + card.mentalCost, 0
@@ -222,6 +250,12 @@ export class GameManager {
             // 정신력 소모 (방어 마법)
             defender.mentalPower = Math.max(0, defender.mentalPower - card.mentalCost);
         });
+
+        // 필드 마법: 얼음 왕국 (발동자 방어력 +5)
+        if (this.session.fieldMagic?.name === '얼음 왕국' && 
+            this.session.fieldMagic.casterId === defender.id) {
+            totalDefense += 5;
+        }
 
         // 되받아치기 - 공격자가 새로운 방어자가 됨
         if (hasReflect) {
@@ -352,23 +386,37 @@ export class GameManager {
         if (!this.session.fieldMagic) return;
 
         const caster = this.session.players.find(p => p.id === this.session.fieldMagic?.casterId);
+        const fieldMagic = this.session.fieldMagic;
         
-        // 필드 마법 효과 (간단한 예시)
-        if (this.session.fieldMagic.name === '화염의 대지') {
+        // 필드 마법 효과 적용
+        if (fieldMagic.name === '화염의 대지') {
+            // 모든 적에게 매 턴 5 데미지
             this.session.players.forEach(player => {
-                if (player.id !== this.session.fieldMagic?.casterId && player.isAlive) {
+                if (player.id !== fieldMagic.casterId && player.isAlive) {
                     this.applyDamage(player, 5, 0);
+                    uiManager.addLogMessage(`🔥 ${player.name}이(가) 화염의 대지에서 5 데미지를 받았습니다!`);
                 }
             });
-        } else if (this.session.fieldMagic.name === '치유의 성역' && caster) {
+        } else if (fieldMagic.name === '치유의 성역' && caster && caster.isAlive) {
+            // 발동자는 매 턴 체력 10 회복
             caster.health = Math.min(caster.maxHealth, caster.health + 10);
-            uiManager.addLogMessage(`${caster.name}이(가) 체력 10을 회복했습니다!`);
+            uiManager.addLogMessage(`✨ ${caster.name}이(가) 치유의 성역에서 체력 10을 회복했습니다!`);
+        } else if (fieldMagic.name === '얼음 왕국' && caster && caster.isAlive) {
+            // 공격력 감소는 resolveAttack에서 처리
+            uiManager.addLogMessage(`❄️ 얼음 왕국이 모든 적의 공격력을 약화시킵니다!`);
+        } else if (fieldMagic.name === '마력의 폭풍' && caster && caster.isAlive) {
+            // 발동자는 매 턴 정신력 3 회복
+            caster.mentalPower = Math.min(caster.maxMentalPower, caster.mentalPower + 3);
+            uiManager.addLogMessage(`⚡ ${caster.name}이(가) 마력의 폭풍에서 정신력 3을 회복했습니다!`);
+        } else if (fieldMagic.name === '혼돈의 소용돌이') {
+            // 공격 대상 랜덤 지정은 showTargetSelection에서 처리
+            uiManager.addLogMessage(`🌀 혼돈의 소용돌이가 전장을 휘감습니다!`);
         }
 
         // 지속 시간 감소
-        this.session.fieldMagic.duration--;
-        if (this.session.fieldMagic.duration <= 0) {
-            uiManager.addLogMessage(`필드 마법 [${this.session.fieldMagic.name}]의 효과가 끝났습니다!`);
+        fieldMagic.duration--;
+        if (fieldMagic.duration <= 0) {
+            uiManager.addLogMessage(`필드 마법 [${fieldMagic.name}]의 효과가 끝났습니다!`);
             this.session.fieldMagic = undefined;
             uiManager.updateFieldMagic(null);
         }
