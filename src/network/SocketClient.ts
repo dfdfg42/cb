@@ -39,6 +39,7 @@ export class SocketClient {
     private onSpecialEvent?: (data: any) => void;
     private onPlayerStateUpdate?: (data: any) => void;
     private onGameOver?: (data: any) => void;
+    private onRoomsList?: (data: { rooms: ServerRoom[] }) => void;
 
     private constructor() {}
 
@@ -214,9 +215,9 @@ export class SocketClient {
     }
 
     // 방 목록 요청
-    public getRooms(): void {
+    public getRooms(gameType?: 'normal' | 'ranked'): void {
         if (!this.socket?.connected) return;
-        this.socket.emit('get-rooms');
+        this.socket.emit('get-rooms', { gameType });
     }
 
     // 이벤트 리스너 설정
@@ -300,6 +301,7 @@ export class SocketClient {
 
         this.socket.on('rooms-list', (data) => {
             console.log('📋 방 목록:', data.rooms);
+            this.onRoomsList?.(data);
         });
     }
 
@@ -318,6 +320,10 @@ export class SocketClient {
 
     public setOnGameStarting(callback: (data: { room: ServerRoom }) => void): void {
         this.onGameStarting = callback;
+    }
+
+    public setOnRoomsList(callback: (data: { rooms: ServerRoom[] }) => void): void {
+        this.onRoomsList = callback;
     }
 
     public setOnGameAction(callback: (action: any) => void): void {

@@ -37,6 +37,19 @@ const rooms = new Map<string, Room>();
 
 // 유틸리티 함수
 function generateRoomId(): string {
+    // Use crypto.randomUUID when available for stable unique ids
+    try {
+        // Node 14.17+ has crypto.randomUUID
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const crypto = require('crypto');
+        if (typeof crypto.randomUUID === 'function') {
+            return `room_${crypto.randomUUID()}`;
+        }
+    } catch (e) {
+        // ignore and fallback
+    }
+
+    // fallback to timestamp+random
     return `room_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 }
 
@@ -278,9 +291,15 @@ io.on('connection', (socket: Socket) => {
     });
 
     // 방 목록 요청
-    socket.on('get-rooms', () => {
-        const availableRooms = Array.from(rooms.values())
+    socket.on('get-rooms', (data?: { gameType?: 'normal' | 'ranked' }) => {
+        let availableRooms = Array.from(rooms.values())
             .filter(room => !room.isPlaying && room.players.length < room.maxPlayers);
+
+        // 선택한 gameType이 있으면 해당 타입의 방만 반환
+        if (data && data.gameType) {
+            availableRooms = availableRooms.filter(r => r.gameType === data.gameType);
+        }
+
         socket.emit('rooms-list', { rooms: availableRooms });
     });
 });

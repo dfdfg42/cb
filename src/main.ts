@@ -17,6 +17,7 @@ class Game {
     private gameManager?: GameManager;
     private combatUI?: CombatUI;
     private isMultiplayer: boolean = false;
+    private pendingJoinMode: 'normal' | 'ranked' | null = null;
     
     constructor() {
         this.playersManager = new PlayersManager();
@@ -165,7 +166,7 @@ class Game {
         });
         
         // 방 상태 업데이트
-        socketClient.setOnRoomUpdated((data) => {
+    socketClient.setOnRoomUpdated((data) => {
             console.log('방 업데이트');
             this.updateRoomPlayers(data.room.players);
             
@@ -184,6 +185,26 @@ class Game {
                     };
                 }
             }
+        });
+
+        // 방 목록 수신 (getRooms 결과)
+        socketClient.setOnRoomsList((data) => {
+            console.log('rooms-list 수신:', data.rooms);
+
+            if (!this.pendingJoinMode) return;
+
+            // 같은 모드의 방 중 첫 번째 사용 가능한 방으로 참가
+            const targetRoom = data.rooms.find((r: any) => r.gameType === this.pendingJoinMode);
+
+            if (targetRoom) {
+                console.log('빈 방 발견, 참가 시도:', targetRoom.id);
+                socketClient.joinRoom(targetRoom.id);
+            } else {
+                console.log('빈 방 없음, 새로 방 생성:', this.pendingJoinMode);
+                socketClient.createRoom(this.pendingJoinMode);
+            }
+
+            this.pendingJoinMode = null;
         });
         
         // 게임 시작
@@ -344,11 +365,12 @@ class Game {
             roomType.textContent = mode === 'normal' ? '일반전 대기실' : '랭크전 대기실';
         }
         
-        // 멀티플레이어 모드
-        this.isMultiplayer = true;
-        
-        // 서버에 방 생성 요청
-        socketClient.createRoom(mode);
+    // 멀티플레이어 모드
+    this.isMultiplayer = true;
+
+    // 빈 방이 있는지 서버에 요청하고, 있으면 참가, 없으면 방 생성
+    this.pendingJoinMode = mode;
+    socketClient.getRooms(mode);
     }
     
     private leaveRoom(): void {
