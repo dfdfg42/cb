@@ -64,18 +64,18 @@ async function runClient(name: string, mode: Mode, waitBeforeConnect = 0) {
 async function main() {
     console.log('Starting multi-client test...');
 
-    // Launch between 5 and 8 clients (we'll run 8 to cover the range)
-    const clientCount = 8;
+    // Launch 10 clients to stress-test room allocation (max 4 per room)
+    const clientCount = 10;
     for (let i = 0; i < clientCount; i++) {
         const name = `TestUser${i + 1}`;
-        // stagger connections a bit
-        const delay = i * 250; // 0ms, 250ms, 500ms, ...
+        // stagger connections to avoid exact simultaneous bursts
+        const delay = i * 200; // 0ms, 200ms, 400ms, ...
         runClient(name, 'normal', delay);
     }
 
     // allow test to run
-    // 더 여유있게 대기하여 이벤트 흐름을 관찰
-    await sleep(35000);
+    // 충분히 기다려 모든 이벤트 흐름을 관찰
+    await sleep(45000);
     console.log('Test finished.');
 }
 
