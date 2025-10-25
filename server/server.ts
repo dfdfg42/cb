@@ -30,6 +30,9 @@ interface Room {
     gameType: 'normal' | 'ranked';
     isPlaying: boolean;
     hostId: string;
+    // server-authoritative turn tracking
+    currentPlayerIndex?: number; // index into players[] for whose turn it is
+    currentTurn?: number;
 }
 
 // 방 목록
@@ -191,12 +194,16 @@ io.on('connection', (socket: Socket) => {
             return;
         }
 
+        // Mark room as playing and initialize server-side turn tracking
         room.isPlaying = true;
+        room.currentPlayerIndex = 0;
+        room.currentTurn = 1;
 
-        // 게임 시작 신호
+        // Broadcast authoritative game start and initial turn
         io.to(data.roomId).emit('game-starting', { room });
+        io.to(data.roomId).emit('turn-start', { roomId: data.roomId, currentPlayerId: room.players[0].id, currentTurn: room.currentTurn });
 
-        console.log(`🎮 게임 시작: ${data.roomId}`);
+        console.log(`🎮 게임 시작: ${data.roomId} (turn=${room.currentTurn}, player=${room.players[0].name})`);
     });
 
     // 게임 액션 (카드 사용, 공격 등)
@@ -211,10 +218,39 @@ io.on('connection', (socket: Socket) => {
     // 공격 액션
     socket.on('player-attack', (data: { roomId: string, attackerId: string, targetId: string, cards: any[], damage: number }) => {
         const room = rooms.get(data.roomId);
-        if (!room || !room.isPlaying) return;
+        if (!room || !room.isPlaying) {
+            socket.emit('error', { message: '게임 중이 아닌 방입니다.' });
+            return;
+        }
 
-        console.log(`⚔️ 공격: ${data.attackerId} -> ${data.targetId}, 데미지: ${data.damage}`);
+        // Find attacker by socket id to ensure authenticity
+        const attacker = room.players.find(p => p.socketId === socket.id);
+        if (!attacker || attacker.id !== data.attackerId) {
+            socket.emit('error', { message: '유효하지 않은 공격자입니다.' });
+            return;
+        }
+
+        // Ensure it's attacker's turn according to server-side tracking
+        const currentIndex = room.currentPlayerIndex ?? 0;
+        const currentPlayer = room.players[currentIndex];
+        if (attacker.id !== currentPlayer.id) {
+            socket.emit('error', { message: '현재 차례가 아닙니다.' });
+            return;
+        }
+
+        // Accept the attack and broadcast authoritative event to room
+        console.log(`⚔️ [서버 승인] 공격: ${attacker.name} -> ${data.targetId}, 데미지: ${data.damage}`);
         io.to(data.roomId).emit('player-attack', data);
+
+        // Advance turn (simple round-robin)
+        const nextIndex = (currentIndex + 1) % room.players.length;
+        room.currentPlayerIndex = nextIndex;
+        room.currentTurn = (room.currentTurn || 1) + (nextIndex === 0 ? 1 : 0);
+
+        const nextPlayerId = room.players[nextIndex].id;
+        // Emit turn-end/turn-start so clients stay in sync
+        io.to(data.roomId).emit('turn-end', { roomId: data.roomId, playerId: attacker.id, nextPlayerId });
+        io.to(data.roomId).emit('turn-start', { roomId: data.roomId, currentPlayerId: nextPlayerId, currentTurn: room.currentTurn });
     });
 
     // 방어 액션
