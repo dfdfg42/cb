@@ -48,6 +48,42 @@ async function runClient(name: string, mode: Mode, waitBeforeConnect = 0) {
 
     socket.on('room-updated', (data) => {
         console.log(`[${name}] room-updated: players=${data.room.players.map((p:any) => p.name).join(', ')}`);
+        // If this client is the host (first player)
+        try {
+            const me = data.room.players.find((p: any) => p.socketId === socket.id);
+            if (me && data.room.players.length >= 2 && data.room.players[0].id === me.id) {
+                // If the room hasn't started yet, wait shortly to allow others to ready, then start
+                if (!data.room.isPlaying) {
+                    console.log(`[${name}] will attempt start-game for room ${data.room.id} shortly`);
+                    setTimeout(() => {
+                        try {
+                            console.log(`[${name}] starting game for room ${data.room.id}`);
+                            socket.emit('start-game', { roomId: data.room.id });
+                        } catch (e) {}
+                    }, 600);
+                    return;
+                }
+
+                // pick a random target that's not the attacker
+                const targets = data.room.players.filter((p: any) => p.id !== me.id && p.isAlive !== false);
+                if (targets.length > 0) {
+                    const target = targets[Math.floor(Math.random() * targets.length)];
+                    const reqId = `req_${Date.now().toString(36)}_${Math.random().toString(36).substr(2,6)}`;
+                    const cards = [{ id: 'test-card-1', name: 'Sim Strike', damage: 5 }];
+                    const damage = 5;
+                    console.log(`[${name}] sending test attack ${me.id} -> ${target.id} (req=${reqId})`);
+                    setTimeout(() => {
+                        socket.emit('player-attack', { requestId: reqId, roomId: data.room.id, attackerId: me.id, targetId: target.id, cards, damage });
+                    }, 300 + Math.random() * 500);
+                }
+            }
+        } catch (e) {
+            // ignore
+        }
+    });
+
+    socket.on('attack-resolved', (data) => {
+        console.log(`[${name}] attack-resolved:`, data);
     });
 
     socket.on('error', (err) => {

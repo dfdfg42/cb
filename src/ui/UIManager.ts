@@ -119,7 +119,28 @@ export class UIManager {
     
     // 알림 표시 (간단한 알림)
     showAlert(message: string): void {
-        // TODO: 더 나은 알림 UI 구현
+        // 게임 화면 내에서 표시할 수 있는 배너를 우선으로 사용합니다.
+        const gameScreen = document.getElementById('game-screen');
+        if (gameScreen && this.currentScreen === (window as any).Screen?.GAME) {
+            // 배너 요소 생성
+            const banner = document.createElement('div');
+            banner.className = 'in-game-alert';
+            banner.textContent = message;
+
+            // 배너 추가 및 자동 제거
+            gameScreen.appendChild(banner);
+            // 트랜지션을 위해 약간의 딜레이 후 visible 클래스 추가
+            requestAnimationFrame(() => banner.classList.add('visible'));
+
+            setTimeout(() => {
+                banner.classList.remove('visible');
+                // 애니메이션 후 제거
+                setTimeout(() => banner.remove(), 400);
+            }, 3000);
+            return;
+        }
+
+        // 게임 화면이 아니면 기본 alert 사용
         alert(message);
     }
 }

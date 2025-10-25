@@ -34,6 +34,9 @@ export class SocketClient {
     private onError?: (data: { message: string }) => void;
     private onPlayerDisconnected?: (data: { playerName: string }) => void;
     private onPlayerAttack?: (data: any) => void;
+    private onAttackResolved?: (data: any) => void;
+    private onDefendRequest?: (data: any) => void;
+    private onAttackAnnounced?: (data: any) => void;
     private onPlayerDefend?: (data: any) => void;
     private onTurnEnd?: (data: any) => void;
     private onSpecialEvent?: (data: any) => void;
@@ -144,16 +147,36 @@ export class SocketClient {
     }
 
     // 공격 액션 전송
-    public sendAttack(attackerId: string, targetId: string, cards: any[], damage: number): void {
-        if (!this.socket?.connected || !this.currentRoomId) return;
+    public sendAttack(attackerId: string, targetId: string, cards: any[], damage: number): string | null {
+        if (!this.socket?.connected || !this.currentRoomId) return null;
+
+        const requestId = this.generateRequestId();
 
         this.socket.emit('player-attack', {
+            requestId,
             roomId: this.currentRoomId,
             attackerId,
             targetId,
             cards,
             damage
         });
+
+        return requestId;
+    }
+
+    private generateRequestId(): string {
+        // Prefer standard Web Crypto API if available (browser). Avoid requiring Node's 'crypto' here
+        try {
+            const webCrypto = (globalThis as any).crypto;
+            if (webCrypto && typeof webCrypto.randomUUID === 'function') {
+                return webCrypto.randomUUID();
+            }
+        } catch (e) {
+            // ignore
+        }
+
+        // Fallback simple random id (safe for browser/Node bundlers)
+        return 'req_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 11);
     }
 
     // 방어 액션 전송
@@ -162,6 +185,19 @@ export class SocketClient {
 
         this.socket.emit('player-defend', {
             roomId: this.currentRoomId,
+            defenderId,
+            cards,
+            defense
+        });
+    }
+
+    // send defend with requestId (server uses requestId to match pending attack)
+    public sendDefendWithRequest(requestId: string, defenderId: string, cards: any[], defense: number): void {
+        if (!this.socket?.connected || !this.currentRoomId) return;
+
+        this.socket.emit('player-defend', {
+            roomId: this.currentRoomId,
+            requestId,
             defenderId,
             cards,
             defense
@@ -264,6 +300,21 @@ export class SocketClient {
             this.onPlayerAttack?.(data);
         });
 
+        this.socket.on('defend-request', (data) => {
+            console.log('🛡️ defend-request 수신:', data);
+            this.onDefendRequest?.(data);
+        });
+
+        this.socket.on('attack-announced', (data) => {
+            console.log('📣 attack-announced:', data);
+            this.onAttackAnnounced?.(data);
+        });
+
+        this.socket.on('attack-resolved', (data) => {
+            console.log('✅ attack-resolved 수신:', data);
+            this.onAttackResolved?.(data);
+        });
+
         this.socket.on('player-defend', (data) => {
             console.log('🛡️ 방어 수신:', data);
             this.onPlayerDefend?.(data);
@@ -330,6 +381,14 @@ export class SocketClient {
         this.onGameAction = callback;
     }
 
+    public setOnDefendRequest(callback: (data: any) => void): void {
+        this.onDefendRequest = callback;
+    }
+
+    public setOnAttackAnnounced(callback: (data: any) => void): void {
+        this.onAttackAnnounced = callback;
+    }
+
     public setOnError(callback: (data: { message: string }) => void): void {
         this.onError = callback;
     }
@@ -340,6 +399,10 @@ export class SocketClient {
 
     public setOnPlayerAttack(callback: (data: any) => void): void {
         this.onPlayerAttack = callback;
+    }
+
+    public setOnAttackResolved(callback: (data: any) => void): void {
+        this.onAttackResolved = callback;
     }
 
     public setOnPlayerDefend(callback: (data: any) => void): void {

@@ -10,6 +10,8 @@
     "type-check": "tsc --noEmit",
     "server": "nodemon --watch server --exec ts-node server/server.ts",
     "server:build": "tsc -p server/tsconfig.json"
+    ,
+    "test:integration": "node server/integrationTest.js"
   },
   "keywords": [
     "card-game",

@@ -22,6 +22,14 @@ interface Player {
     isReady: boolean;
 }
 
+// 서버에서 관리하는 플레이어 상태 (HP 등)
+interface PlayerState {
+    health: number;
+    mentalPower: number;
+    alive: boolean;
+    debuffs?: string[];
+}
+
 interface Room {
     id: string;
     name: string;
@@ -33,6 +41,12 @@ interface Room {
     // server-authoritative turn tracking
     currentPlayerIndex?: number; // index into players[] for whose turn it is
     currentTurn?: number;
+    // per-player authoritative state (initialized on game start)
+    playerStates?: Record<string, PlayerState>;
+    // processed requests for idempotency: requestId -> resolved payload
+    processedRequests?: Record<string, { resolved: any, timestamp: number }>;
+    // pending attacks waiting for defender response
+    pendingAttacks?: Record<string, any>;
 }
 
 // 방 목록
@@ -141,6 +155,11 @@ io.on('connection', (socket: Socket) => {
         const player = room.players[playerIndex];
         room.players.splice(playerIndex, 1);
 
+        // Remove authoritative player state if present
+        if (room.playerStates && player && player.id) {
+            delete room.playerStates[player.id];
+        }
+
         socket.leave(data.roomId);
 
         // 방이 비었으면 삭제
@@ -184,13 +203,9 @@ io.on('connection', (socket: Socket) => {
             return;
         }
 
-        // 모든 플레이어가 준비되었는지 확인 (호스트 제외)
-        const allReady = room.players
-            .filter(p => p.id !== room.hostId)
-            .every(p => p.isReady);
-
-        if (!allReady && room.players.length > 1) {
-            socket.emit('error', { message: '모든 플레이어가 준비되지 않았습니다.' });
+        // 게임 시작을 위해 최소 플레이어 수를 확인 (2명 이상)
+        if (room.players.length < 2) {
+            socket.emit('error', { message: '게임을 시작하려면 최소 2명 이상의 플레이어가 필요합니다.' });
             return;
         }
 
@@ -198,6 +213,17 @@ io.on('connection', (socket: Socket) => {
         room.isPlaying = true;
         room.currentPlayerIndex = 0;
         room.currentTurn = 1;
+
+        // Initialize authoritative player states (example defaults)
+        room.playerStates = {};
+        for (const p of room.players) {
+            room.playerStates[p.id] = {
+                health: 100,
+                mentalPower: 0,
+                alive: true,
+                debuffs: []
+            };
+        }
 
         // Broadcast authoritative game start and initial turn
         io.to(data.roomId).emit('game-starting', { room });
@@ -216,7 +242,7 @@ io.on('connection', (socket: Socket) => {
     });
 
     // 공격 액션
-    socket.on('player-attack', (data: { roomId: string, attackerId: string, targetId: string, cards: any[], damage: number }) => {
+    socket.on('player-attack', (data: { roomId: string, attackerId: string, targetId: string, cards: any[], damage: number, requestId?: string }) => {
         const room = rooms.get(data.roomId);
         if (!room || !room.isPlaying) {
             socket.emit('error', { message: '게임 중이 아닌 방입니다.' });
@@ -238,29 +264,341 @@ io.on('connection', (socket: Socket) => {
             return;
         }
 
-        // Accept the attack and broadcast authoritative event to room
-        console.log(`⚔️ [서버 승인] 공격: ${attacker.name} -> ${data.targetId}, 데미지: ${data.damage}`);
-        io.to(data.roomId).emit('player-attack', data);
+        // Idempotency: if requestId already processed, re-send stored resolved
+        const reqId = data.requestId;
+        if (reqId && room.processedRequests && room.processedRequests[reqId]) {
+            const cachedEntry = room.processedRequests[reqId];
+            const cached = cachedEntry.resolved;
+            io.to(data.roomId).emit('attack-resolved', cached);
+            // Also emit turn events based on cached if present
+            if (cached.nextPlayerId) {
+                io.to(data.roomId).emit('turn-end', { roomId: data.roomId, playerId: cached.attackerId, nextPlayerId: cached.nextPlayerId });
+                io.to(data.roomId).emit('turn-start', { roomId: data.roomId, currentPlayerId: cached.nextPlayerId, currentTurn: cached.currentTurn });
+            }
+            return;
+        }
 
-        // Advance turn (simple round-robin)
-        const nextIndex = (currentIndex + 1) % room.players.length;
-        room.currentPlayerIndex = nextIndex;
-        room.currentTurn = (room.currentTurn || 1) + (nextIndex === 0 ? 1 : 0);
+        // Compute authoritative damage on server
+        let damage = typeof data.damage === 'number' ? data.damage : 0;
+        if (Array.isArray(data.cards)) {
+            for (const c of data.cards) {
+                if (c && (typeof c.healthDamage === 'number' || typeof c.damage === 'number')) {
+                    damage += (typeof c.healthDamage === 'number' ? c.healthDamage : (c.damage || 0));
+                }
+            }
+        }
 
-        const nextPlayerId = room.players[nextIndex].id;
-        // Emit turn-end/turn-start so clients stay in sync
-        io.to(data.roomId).emit('turn-end', { roomId: data.roomId, playerId: attacker.id, nextPlayerId });
-        io.to(data.roomId).emit('turn-start', { roomId: data.roomId, currentPlayerId: nextPlayerId, currentTurn: room.currentTurn });
+        // determine attack attribute if provided on cards
+        let attackAttribute: string | null = null;
+        if (Array.isArray(data.cards)) {
+            for (const c of data.cards) {
+                if (c && c.attribute) {
+                    attackAttribute = c.attribute;
+                    break;
+                }
+            }
+        }
+
+        // Ensure playerStates exists
+        if (!room.playerStates) {
+            room.playerStates = {};
+            for (const p of room.players) {
+                room.playerStates[p.id] = { health: 100, mentalPower: 0, alive: true };
+            }
+        }
+
+        const targetState = room.playerStates[data.targetId];
+        const targetPlayer = room.players.find(p => p.id === data.targetId);
+        if (!targetState || !targetPlayer) {
+            socket.emit('error', { message: '타겟을 찾을 수 없습니다.' });
+            return;
+        }
+        // Instead of immediate application, create a pending attack and give defender chance to respond
+        const pendingId = reqId || `srvreq_${Date.now()}_${Math.random().toString(36).substr(2,6)}`;
+        room.pendingAttacks = room.pendingAttacks || {};
+
+        const pending = {
+            requestId: pendingId,
+            attackerId: attacker.id,
+            attackerName: attacker.name,
+            targetId: data.targetId,
+            targetName: targetPlayer.name,
+            damage,
+            cardsUsed: data.cards || [],
+            attackAttribute,
+            timestamp: Date.now()
+        };
+
+        // include roomId for convenience
+        (pending as any).roomId = data.roomId;
+
+        room.pendingAttacks[pendingId] = pending;
+
+        // Broadcast announcement so UI can show center info for everyone
+        io.to(data.roomId).emit('attack-announced', {
+            requestId: pendingId,
+            attackerId: attacker.id,
+            attackerName: attacker.name,
+            targetId: data.targetId,
+            damage,
+            attackAttribute,
+            cardsUsed: pending.cardsUsed || []
+        });
+
+        // Also send a defend-request specifically to the target socket so only they get the prompt to pick defense
+        const targetSocketId = targetPlayer.socketId;
+        if (targetSocketId) {
+            io.to(targetSocketId).emit('defend-request', {
+                requestId: pendingId,
+                attackerId: attacker.id,
+                attackerName: attacker.name,
+                damage,
+                attackAttribute,
+                roomId: data.roomId
+            });
+        }
+
+        // set timeout to auto-resolve if defender doesn't respond in time (6s)
+        const TIMEOUT = 6000;
+        const timeoutId = setTimeout(() => {
+            // if still pending, resolve without defense
+            if (room.pendingAttacks && room.pendingAttacks[pendingId]) {
+                resolvePendingAttack(room, pendingId, null);
+            }
+        }, TIMEOUT);
+
+        // attach timeout id for possible cancellation
+        room.pendingAttacks[pendingId].timeoutId = timeoutId;
     });
 
-    // 방어 액션
-    socket.on('player-defend', (data: { roomId: string, defenderId: string, cards: any[], defense: number }) => {
+    // defender response handler - server authoritative defense resolution
+    socket.on('player-defend', (data: { roomId: string, requestId: string, defenderId: string, cards: any[], defense?: number }) => {
         const room = rooms.get(data.roomId);
         if (!room || !room.isPlaying) return;
 
-        console.log(`🛡️ 방어: ${data.defenderId}, 방어력: ${data.defense}`);
-        io.to(data.roomId).emit('player-defend', data);
+        if (!data.requestId || !room.pendingAttacks || !room.pendingAttacks[data.requestId]) {
+            socket.emit('error', { message: '해당 방어 요청을 찾을 수 없습니다.' });
+            return;
+        }
+
+        const pending = room.pendingAttacks[data.requestId];
+
+        // validate defender
+        if (pending.targetId !== data.defenderId) {
+            socket.emit('error', { message: '당신은 이 공격의 방어자가 아닙니다.' });
+            return;
+        }
+
+        // cancel timeout
+        if (pending.timeoutId) clearTimeout(pending.timeoutId);
+
+        // compute defense value
+        let defenseValue = typeof data.defense === 'number' ? data.defense : 0;
+        const defenderCards = Array.isArray(data.cards) ? data.cards : [];
+        for (const c of defenderCards) {
+            if (c && typeof c.defense === 'number') defenseValue += c.defense;
+        }
+
+        // broadcast defender's chosen cards immediately so all clients can show center UI
+        io.to(data.roomId).emit('player-defend', {
+            defenderId: data.defenderId,
+            cards: defenderCards
+        });
+
+        // check attribute matching rules
+        const attackAttr = pending.attackAttribute;
+        const defenseEffective = isDefenseEffective(attackAttr, defenderCards);
+
+        // if defense not effective, treat as no defense
+        const appliedDefense = defenseEffective ? defenseValue : 0;
+
+        // Apply final damage
+    const targetState = room.playerStates && room.playerStates[pending.targetId];
+        const prevHealth = targetState ? targetState.health : 0;
+        const finalDamage = Math.max(0, pending.damage - appliedDefense);
+
+        if (targetState) {
+            targetState.health = Math.max(0, (targetState.health || 0) - finalDamage);
+            if (targetState.health <= 0) targetState.alive = false;
+        }
+
+        // apply card effects (debuffs) from attacker's cards
+        const appliedDebuffs: string[] = [];
+        try {
+            const atkCards = pending.cardsUsed || [];
+            for (const ac of atkCards) {
+                if (ac && ac.effect && ac.effect !== 'reflect' && ac.effect !== 'bounce') {
+                    if (targetState) {
+                        targetState.debuffs = targetState.debuffs || [];
+                        if (!targetState.debuffs.includes(ac.effect)) {
+                            targetState.debuffs.push(ac.effect);
+                            appliedDebuffs.push(ac.effect);
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            // ignore malformed card effects
+        }
+
+        // handle special defense effects (reflect / bounce)
+        let reflectDamage = 0;
+        let bounceTargetId: string | null = null;
+    // attackerState used for reflect resolution
+    const attackerState = room.playerStates && room.playerStates[pending.attackerId];
+        for (const dc of defenderCards) {
+            if (!dc || !dc.effect) continue;
+            if (dc.effect === 'reflect') {
+                reflectDamage = finalDamage;
+            } else if (dc.effect === 'bounce') {
+                // pick another random alive player (excluding defender)
+                const alive = room.players.filter(p => p.id !== data.defenderId && room.playerStates && room.playerStates[p.id] && room.playerStates[p.id].alive);
+                if (alive.length > 0) {
+                    const rnd = alive[Math.floor(Math.random() * alive.length)];
+                    bounceTargetId = rnd.id;
+                    const btState = room.playerStates && room.playerStates[bounceTargetId];
+                    if (btState) {
+                        btState.health = Math.max(0, btState.health - finalDamage);
+                        if (btState.health <= 0) btState.alive = false;
+                    }
+                }
+            }
+        }
+
+            // apply reflect if any
+            if (reflectDamage > 0 && attackerState) {
+                attackerState.health = Math.max(0, attackerState.health - reflectDamage);
+                if (attackerState.health <= 0) attackerState.alive = false;
+            }
+
+        // Advance turn (simple round-robin)
+        const currentIndex = room.currentPlayerIndex ?? 0;
+        const nextIndex = (currentIndex + 1) % room.players.length;
+        room.currentPlayerIndex = nextIndex;
+        room.currentTurn = (room.currentTurn || 1) + (nextIndex === 0 ? 1 : 0);
+        const nextPlayerId = room.players[nextIndex].id;
+
+        // Build resolved payload
+        const resolved = {
+            attackerId: pending.attackerId,
+            attackerName: pending.attackerName,
+            targetId: pending.targetId,
+            targetName: pending.targetName,
+            damageApplied: finalDamage,
+            targetPrevHealth: prevHealth,
+            targetHealth: targetState ? targetState.health : 0,
+            eliminated: targetState ? !targetState.alive : false,
+            cardsUsed: pending.cardsUsed || [],
+            defenseCards: defenderCards,
+            defenseApplied: appliedDefense,
+            reflectDamage,
+            bounceTargetId,
+            appliedDebuffs,
+            nextPlayerId,
+            currentTurn: room.currentTurn,
+            timestamp: Date.now(),
+            requestId: pending.requestId
+        };
+
+        // store for idempotency
+        room.processedRequests = room.processedRequests || {};
+        room.processedRequests[pending.requestId] = { resolved, timestamp: Date.now() };
+
+    // cleanup pending
+    if (room.pendingAttacks) delete room.pendingAttacks[pending.requestId];
+
+        // Broadcast resolution
+        io.to(data.roomId).emit('defense-resolved', resolved);
+        io.to(data.roomId).emit('attack-resolved', resolved);
+        io.to(data.roomId).emit('turn-end', { roomId: data.roomId, playerId: pending.attackerId, nextPlayerId });
+        io.to(data.roomId).emit('turn-start', { roomId: data.roomId, currentPlayerId: nextPlayerId, currentTurn: room.currentTurn });
     });
+
+    // helper to resolve pending attack with no defense
+    function resolvePendingAttack(room: Room, pendingId: string, defenderCards: any[] | null) {
+        const pending = room.pendingAttacks && room.pendingAttacks[pendingId];
+        if (!pending) return;
+
+        // apply damage to target
+        const targetState = room.playerStates && room.playerStates[pending.targetId];
+        const prevHealth = targetState ? targetState.health : 0;
+        const finalDamage = pending.damage; // no defense
+        if (targetState) {
+            targetState.health = Math.max(0, (targetState.health || 0) - finalDamage);
+            if (targetState.health <= 0) targetState.alive = false;
+        }
+
+        // apply card effects (debuffs) from attacker's cards when no defense used
+        const appliedDebuffs: string[] = [];
+        try {
+            const atkCards = pending.cardsUsed || [];
+            for (const ac of atkCards) {
+                if (ac && ac.effect && ac.effect !== 'reflect' && ac.effect !== 'bounce') {
+                    if (targetState) {
+                        targetState.debuffs = targetState.debuffs || [];
+                        if (!targetState.debuffs.includes(ac.effect)) {
+                            targetState.debuffs.push(ac.effect);
+                            appliedDebuffs.push(ac.effect);
+                        }
+                    }
+                }
+            }
+        } catch (e) {}
+
+        // Advance turn
+        const currentIndex = room.currentPlayerIndex ?? 0;
+        const nextIndex = (currentIndex + 1) % room.players.length;
+        room.currentPlayerIndex = nextIndex;
+        room.currentTurn = (room.currentTurn || 1) + (nextIndex === 0 ? 1 : 0);
+        const nextPlayerId = room.players[nextIndex].id;
+
+        const resolved = {
+            attackerId: pending.attackerId,
+            attackerName: pending.attackerName,
+            targetId: pending.targetId,
+            targetName: pending.targetName,
+            damageApplied: finalDamage,
+            targetPrevHealth: prevHealth,
+            targetHealth: targetState ? targetState.health : 0,
+            eliminated: targetState ? !targetState.alive : false,
+            cardsUsed: pending.cardsUsed || [],
+            defenseCards: defenderCards || [],
+            defenseApplied: 0,
+            appliedDebuffs,
+            nextPlayerId,
+            currentTurn: room.currentTurn,
+            timestamp: Date.now(),
+            requestId: pending.requestId
+        };
+
+        room.processedRequests = room.processedRequests || {};
+        room.processedRequests[pending.requestId] = { resolved, timestamp: Date.now() };
+
+        // cleanup
+        if (room.pendingAttacks) delete room.pendingAttacks[pending.requestId];
+
+        io.to(room.id).emit('attack-resolved', resolved);
+        io.to(room.id).emit('turn-end', { roomId: room.id, playerId: pending.attackerId, nextPlayerId });
+        io.to(room.id).emit('turn-start', { roomId: room.id, currentPlayerId: nextPlayerId, currentTurn: room.currentTurn });
+    }
+
+    // attribute-defense matching helper
+    function isDefenseEffective(attackAttr: string | null, defenseCards: any[]): boolean {
+        if (!attackAttr) return true; // if attack attribute unknown, allow defenses
+        const defendAttrs = defenseCards.map(dc => dc && dc.attribute).filter(Boolean);
+        // dark can be blocked by any defense
+        if (attackAttr === 'dark') return defendAttrs.length > 0;
+        // light can only be blocked by light defense
+        if (attackAttr === 'light') return defendAttrs.includes('light');
+        // fire attack is blocked by water defense
+        if (attackAttr === 'fire') return defendAttrs.includes('water');
+        // water attack is blocked by fire defense
+        if (attackAttr === 'water') return defendAttrs.includes('fire');
+        // default: allow any defense
+        return defendAttrs.length > 0;
+    }
+
+    // (legacy simple defend handler removed) - authoritative defend handled above with requestId
 
     // 턴 종료
     socket.on('turn-end', (data: { roomId: string, playerId: string, nextPlayerId: string }) => {
@@ -309,6 +647,11 @@ io.on('connection', (socket: Socket) => {
                 const player = room.players[playerIndex];
                 room.players.splice(playerIndex, 1);
 
+                // Remove authoritative player state if present
+                if (room.playerStates && player && player.id) {
+                    delete room.playerStates[player.id];
+                }
+
                 // 방이 비었으면 삭제
                 if (room.players.length === 0) {
                     rooms.delete(roomId);
@@ -345,3 +688,23 @@ const PORT = process.env.PORT || 3001;
 httpServer.listen(PORT, () => {
     console.log(`🚀 서버 실행 중: http://localhost:${PORT}`);
 });
+
+// Cleanup processedRequests older than TTL to avoid memory growth
+const PROCESSED_REQUEST_TTL = 60 * 60 * 1000; // 1 hour
+const CLEANUP_INTERVAL = 10 * 60 * 1000; // 10 minutes
+
+setInterval(() => {
+    const cutoff = Date.now() - PROCESSED_REQUEST_TTL;
+    for (const [, room] of rooms.entries()) {
+        if (!room.processedRequests) continue;
+        for (const [reqId, entry] of Object.entries(room.processedRequests)) {
+            if (entry.timestamp < cutoff) {
+                delete room.processedRequests[reqId];
+            }
+        }
+        // If processedRequests becomes empty, delete the object to free memory
+        if (Object.keys(room.processedRequests).length === 0) {
+            delete room.processedRequests;
+        }
+    }
+}, CLEANUP_INTERVAL);
