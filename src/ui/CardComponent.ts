@@ -5,6 +5,7 @@ export class CardComponent {
     private card: Card;
     private element: HTMLElement;
     private isSelected: boolean = false;
+    private selectable: boolean = true;
     private onClickCallback?: (card: Card) => void;
 
     constructor(card: Card) {
@@ -54,8 +55,8 @@ export class CardComponent {
         cardDiv.appendChild(imageDiv);
         cardDiv.appendChild(nameDiv);
 
-        // 클릭 이벤트
-        cardDiv.addEventListener('click', () => this.handleClick());
+    // 클릭 이벤트
+    cardDiv.addEventListener('click', () => this.handleClick());
         
         // 길게 누르면 상세 정보 (모바일)
         let pressTimer: number;
@@ -88,10 +89,32 @@ export class CardComponent {
     }
 
     private handleClick(): void {
+        if (!this.selectable) return; // 선택 불가 상태면 클릭 무시
+
         this.toggleSelect();
         soundManager.playCardSelect();
         if (this.onClickCallback) {
             this.onClickCallback(this.card);
+        }
+    }
+
+    // UI 상에서 선택 가능 여부 설정 (방어 선택 모드 등에서 사용)
+    public setSelectable(enabled: boolean): void {
+        this.selectable = enabled;
+        const el = this.getElement();
+        if (enabled) {
+            el.classList.remove('not-eligible');
+            el.style.pointerEvents = 'auto';
+            el.style.opacity = '1';
+            el.style.filter = 'none';
+            el.style.cursor = 'pointer';
+        } else {
+            el.classList.add('not-eligible');
+            // visually and interactively mark as not selectable
+            el.style.pointerEvents = 'none';
+            el.style.opacity = '0.4';
+            el.style.filter = 'grayscale(80%)';
+            el.style.cursor = 'not-allowed';
         }
     }
 
@@ -174,7 +197,8 @@ export class CardComponent {
 export class HandManager {
     private cards: CardComponent[] = [];
     private container: HTMLElement;
-    private maxSelection: number = 1;
+    // Allow multiple selection in UI; game rules will validate selections server-side or in GameManager.
+    private maxSelection: number = 99;
     private onSelectionChange?: (selectedCards: Card[]) => void;
 
     constructor(containerId: string = 'hand-cards') {
@@ -194,21 +218,19 @@ export class HandManager {
 
         this.cards.push(cardComponent);
         this.render();
+        console.log(`[DEBUG][HandManager] addCard: ${card.name} (type=${card.type}) - total now ${this.cards.length}`);
     }
 
     public addCards(cards: Card[]): void {
         cards.forEach(card => this.addCard(card));
+        console.log(`[DEBUG][HandManager] addCards called, added ${cards.length} cards`);
     }
 
-    private handleCardSelection(selectedCard: CardComponent): void {
-        const currentlySelected = this.cards.filter(c => c.getSelected());
-        
-        // 일반 최대 선택 수 확인
-        if (currentlySelected.length > this.maxSelection && selectedCard.getSelected()) {
-            // 가장 먼저 선택된 카드 선택 해제
-            currentlySelected[0].deselect();
-        }
-
+    private handleCardSelection(_selectedCard: CardComponent): void {
+        // reference maxSelection to avoid unused-field lint warning
+        void this.maxSelection;
+        // Toggle selection and notify. We intentionally avoid enforcing strict UI limits here so
+        // server/game-manager rules can validate the combination (e.g., + cards, single-magic, etc.).
         if (this.onSelectionChange) {
             const selected = this.cards
                 .filter(c => c.getSelected())
@@ -256,6 +278,7 @@ export class HandManager {
         this.cards.forEach(c => c.destroy());
         this.cards = [];
         this.container.innerHTML = '';
+        console.log('[DEBUG][HandManager] clearHand called - hand emptied');
     }
 
     public getCardCount(): number {
@@ -266,7 +289,46 @@ export class HandManager {
         this.onSelectionChange = callback;
     }
 
+    // 방어 선택 모드에서 특정 속성의 공격을 막을 수 있는 카드만 선택 가능하도록 표시/제한
+    public markEligibleDefense(attackAttribute?: any): void {
+        // 로컬 helper: 공격 속성에 대해 방어 카드가 막을 수 있는지 판단
+        const normalize = (s?: string | null) => {
+            if (!s) return 'none';
+            const x = String(s).toLowerCase();
+            if (x === '화염' || x === 'fire') return 'fire';
+            if (x === '물' || x === 'water') return 'water';
+            if (x === '빛' || x === 'light') return 'light';
+            if (x === '암흑' || x === 'dark') return 'dark';
+            if (x === '없음' || x === 'none') return 'none';
+            return x;
+        };
+
+        const canDefenseBlock = (attackAttr: string | undefined, defenseAttr: string | undefined) => {
+            const a = normalize(attackAttr);
+            const d = normalize(defenseAttr);
+
+            if (a === 'fire') return d === 'water';
+            if (a === 'water') return d === 'fire';
+            if (a === 'light') return d === 'light';
+            if (a === 'dark') return true;
+            return true;
+        };
+
+        console.log(`[DEBUG][HandManager] markEligibleDefense attackAttribute=${attackAttribute}`);
+        this.cards.forEach(cc => {
+            const card = cc.getCard() as any;
+            if (card.type === CardType.DEFENSE) {
+                const eligible = attackAttribute ? canDefenseBlock(attackAttribute, card.attribute) : true;
+                cc.setSelectable(eligible);
+            } else {
+                // 공격/마법 등은 방어 선택 시 선택 불가
+                cc.setSelectable(false);
+            }
+        });
+    }
+
     public setEnabled(enabled: boolean): void {
+        console.log(`[DEBUG][HandManager] setEnabled -> ${enabled}`);
         this.cards.forEach(card => {
             const element = card.getElement();
             if (element) {

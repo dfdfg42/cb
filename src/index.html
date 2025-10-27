@@ -105,6 +105,36 @@
                 <div class="game-log" id="game-log">
                     <div class="log-message">게임이 시작되었습니다!</div>
                 </div>
+
+                <!-- 전투 요약 (공격자 -> 방어자, 사용 카드, 데미지, 상태이상) -->
+                <div id="combat-summary" class="combat-summary">
+                    <div class="summary-line">
+                        <span class="summary-label">공격자 → 방어자</span>
+                        <span id="summary-players" class="summary-value">- → -</span>
+                    </div>
+                    <div class="summary-line">
+                        <span class="summary-label">사용 카드</span>
+                        <span id="summary-cards" class="summary-value">-</span>
+                    </div>
+                    <div class="summary-line">
+                        <span class="summary-label">데미지</span>
+                        <span id="summary-damage" class="summary-value">0</span>
+                    </div>
+                    <div class="summary-line">
+                        <span class="summary-label">상태이상</span>
+                        <span id="summary-debuffs" class="summary-value">-</span>
+                    </div>
+                    <div class="summary-line">
+                        <span class="summary-label">남은 시간</span>
+                        <span id="summary-timer" class="summary-value">-</span>
+                    </div>
+                    <div class="summary-line">
+                        <span class="summary-label">행동</span>
+                        <span class="summary-value">
+                            <button id="summary-take-btn" class="btn btn-secondary btn-small">그냥 맞기</button>
+                        </span>
+                    </div>
+                </div>
             </div>
 
             <!-- 하단 플레이어 손패 -->

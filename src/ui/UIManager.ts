@@ -101,13 +101,25 @@ export class UIManager {
     }
     
     // 공격자/방어자 이름 업데이트
-    updateCombatNames(attackerName: string, defenderName: string): void {
+    // 공격자/방어자 이름 업데이트 — 실제 공격이 확정되었을 때만 호출하세요
+    showCombatNames(attackerName: string, defenderName: string): void {
         const attackerNameEl = document.getElementById('attacker-name');
         const defenderNameEl = document.getElementById('defender-name');
         
         if (attackerNameEl) attackerNameEl.textContent = attackerName;
         if (defenderNameEl) defenderNameEl.textContent = defenderName;
     }
+
+    // 전투 중앙 이름 표시 초기화 (공격/방어가 끝났거나 취소되었을 때 호출)
+    clearCombatNames(): void {
+        const attackerNameEl = document.getElementById('attacker-name');
+        const defenderNameEl = document.getElementById('defender-name');
+        
+        if (attackerNameEl) attackerNameEl.textContent = '-';
+        if (defenderNameEl) defenderNameEl.textContent = '-';
+    }
+
+    // 기존 updateCombatNames는 더이상 사용하지 않습니다. 필요하면 showCombatNames/clearCombatNames를 사용하세요.
     
     // 버튼 활성화/비활성화
     setButtonEnabled(buttonId: string, enabled: boolean): void {

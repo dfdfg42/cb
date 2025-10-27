@@ -317,6 +317,7 @@ io.on('connection', (socket: Socket) => {
         const pendingId = reqId || `srvreq_${Date.now()}_${Math.random().toString(36).substr(2,6)}`;
         room.pendingAttacks = room.pendingAttacks || {};
 
+        const pendingCards = Array.isArray(data.cards) ? data.cards : [];
         const pending = {
             requestId: pendingId,
             attackerId: attacker.id,
@@ -324,7 +325,9 @@ io.on('connection', (socket: Socket) => {
             targetId: data.targetId,
             targetName: targetPlayer.name,
             damage,
-            cardsUsed: data.cards || [],
+            cardsUsed: pendingCards,
+            // store card ids separately for clients to reliably remove used cards
+            cardsUsedIds: pendingCards.map((c: any) => c && c.id).filter(Boolean),
             attackAttribute,
             timestamp: Date.now()
         };
@@ -342,30 +345,34 @@ io.on('connection', (socket: Socket) => {
             targetId: data.targetId,
             damage,
             attackAttribute,
-            cardsUsed: pending.cardsUsed || []
+            cardsUsed: pending.cardsUsed || [],
+            cardsUsedIds: pending.cardsUsedIds || []
         });
+        // Broadcast a defend-request to the room so all clients see the pending attack
+        // Include an expiresAt timestamp so clients can show a synchronized countdown.
+        const DEFEND_TIMEOUT_MS = 20000; // 20 seconds to respond
+        const expiresAt = Date.now() + DEFEND_TIMEOUT_MS;
 
-        // Also send a defend-request specifically to the target socket so only they get the prompt to pick defense
-        const targetSocketId = targetPlayer.socketId;
-        if (targetSocketId) {
-            io.to(targetSocketId).emit('defend-request', {
-                requestId: pendingId,
-                attackerId: attacker.id,
-                attackerName: attacker.name,
-                damage,
-                attackAttribute,
-                roomId: data.roomId
-            });
-        }
+        io.to(data.roomId).emit('defend-request', {
+            requestId: pendingId,
+            attackerId: attacker.id,
+            attackerName: attacker.name,
+            defenderId: pending.targetId,
+            defenderName: pending.targetName,
+            damage,
+            attackAttribute,
+            roomId: data.roomId,
+            expiresAt
+        });
+        console.log(`🔔 defend-request emitted to room ${data.roomId} for defender ${pending.targetId}, expiresAt=${expiresAt}`);
 
-        // set timeout to auto-resolve if defender doesn't respond in time (6s)
-        const TIMEOUT = 6000;
+        // set timeout to auto-resolve if defender doesn't respond in time
         const timeoutId = setTimeout(() => {
             // if still pending, resolve without defense
             if (room.pendingAttacks && room.pendingAttacks[pendingId]) {
                 resolvePendingAttack(room, pendingId, null);
             }
-        }, TIMEOUT);
+        }, DEFEND_TIMEOUT_MS);
 
         // attach timeout id for possible cancellation
         room.pendingAttacks[pendingId].timeoutId = timeoutId;
@@ -392,9 +399,10 @@ io.on('connection', (socket: Socket) => {
         // cancel timeout
         if (pending.timeoutId) clearTimeout(pending.timeoutId);
 
-        // compute defense value
-        let defenseValue = typeof data.defense === 'number' ? data.defense : 0;
-        const defenderCards = Array.isArray(data.cards) ? data.cards : [];
+    // compute defense value
+    let defenseValue = typeof data.defense === 'number' ? data.defense : 0;
+    const defenderCards = Array.isArray(data.cards) ? data.cards : [];
+    const defenderCardIds = defenderCards.map((c: any) => c && c.id).filter(Boolean);
         for (const c of defenderCards) {
             if (c && typeof c.defense === 'number') defenseValue += c.defense;
         }
@@ -402,7 +410,8 @@ io.on('connection', (socket: Socket) => {
         // broadcast defender's chosen cards immediately so all clients can show center UI
         io.to(data.roomId).emit('player-defend', {
             defenderId: data.defenderId,
-            cards: defenderCards
+            cards: defenderCards,
+            cardIds: defenderCardIds
         });
 
         // check attribute matching rules
@@ -423,7 +432,7 @@ io.on('connection', (socket: Socket) => {
         }
 
         // apply card effects (debuffs) from attacker's cards
-        const appliedDebuffs: string[] = [];
+    const appliedDebuffs: string[] = [];
         try {
             const atkCards = pending.cardsUsed || [];
             for (const ac of atkCards) {
@@ -489,7 +498,9 @@ io.on('connection', (socket: Socket) => {
             targetHealth: targetState ? targetState.health : 0,
             eliminated: targetState ? !targetState.alive : false,
             cardsUsed: pending.cardsUsed || [],
+            cardsUsedIds: pending.cardsUsedIds || [],
             defenseCards: defenderCards,
+            defenseCardIds: defenderCardIds,
             defenseApplied: appliedDefense,
             reflectDamage,
             bounceTargetId,
@@ -528,7 +539,7 @@ io.on('connection', (socket: Socket) => {
             if (targetState.health <= 0) targetState.alive = false;
         }
 
-        // apply card effects (debuffs) from attacker's cards when no defense used
+    // apply card effects (debuffs) from attacker's cards when no defense used
         const appliedDebuffs: string[] = [];
         try {
             const atkCards = pending.cardsUsed || [];
@@ -562,7 +573,9 @@ io.on('connection', (socket: Socket) => {
             targetHealth: targetState ? targetState.health : 0,
             eliminated: targetState ? !targetState.alive : false,
             cardsUsed: pending.cardsUsed || [],
+            cardsUsedIds: pending.cardsUsedIds || [],
             defenseCards: defenderCards || [],
+            defenseCardIds: defenderCards ? defenderCards.map(dc => dc && dc.id).filter(Boolean) : [],
             defenseApplied: 0,
             appliedDebuffs,
             nextPlayerId,
@@ -585,16 +598,31 @@ io.on('connection', (socket: Socket) => {
     // attribute-defense matching helper
     function isDefenseEffective(attackAttr: string | null, defenseCards: any[]): boolean {
         if (!attackAttr) return true; // if attack attribute unknown, allow defenses
-        const defendAttrs = defenseCards.map(dc => dc && dc.attribute).filter(Boolean);
-        // dark can be blocked by any defense
-        if (attackAttr === 'dark') return defendAttrs.length > 0;
+
+        // normalize attribute strings because card data may use Korean strings
+        const normalize = (a: string | undefined | null) => {
+            if (!a) return 'none';
+            const s = String(a).toLowerCase();
+            if (s === '화염' || s === 'fire' || s === 'flame') return 'fire';
+            if (s === '물' || s === 'water' || s === 'aqua' || s === 'water') return 'water';
+            if (s === '빛' || s === 'light') return 'light';
+            if (s === '암흑' || s === 'dark' || s === 'darkness') return 'dark';
+            if (s === '없음' || s === 'none' || s === '') return 'none';
+            return s; // fallback
+        };
+
+        const attackNorm = normalize(attackAttr);
+        const defendAttrs = defenseCards.map(dc => normalize(dc && dc.attribute)).filter(Boolean);
+
+        // dark can be blocked by any defense (as long as at least one defense card used)
+        if (attackNorm === 'dark') return defendAttrs.length > 0;
         // light can only be blocked by light defense
-        if (attackAttr === 'light') return defendAttrs.includes('light');
+        if (attackNorm === 'light') return defendAttrs.includes('light');
         // fire attack is blocked by water defense
-        if (attackAttr === 'fire') return defendAttrs.includes('water');
+        if (attackNorm === 'fire') return defendAttrs.includes('water');
         // water attack is blocked by fire defense
-        if (attackAttr === 'water') return defendAttrs.includes('fire');
-        // default: allow any defense
+        if (attackNorm === 'water') return defendAttrs.includes('fire');
+        // default: allow any defense if defender used at least one defense card
         return defendAttrs.length > 0;
     }
 

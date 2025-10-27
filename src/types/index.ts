@@ -50,6 +50,7 @@ export interface Player {
 export enum DebuffType {
     CARD_DECAY = 'card-decay',           // 매 턴 카드 1장 소멸
     RANDOM_TARGET = 'random-target',     // 공격 대상 랜덤 지정
+    MENTAL_DRAIN = 'mental-drain',       // 정신력 회복량 감소 / MP 고갈 관련 디버프
     DAMAGE_INCREASE = 'damage-increase'  // 받는 데미지 증가
 }
 

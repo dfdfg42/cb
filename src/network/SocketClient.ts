@@ -39,6 +39,7 @@ export class SocketClient {
     private onAttackAnnounced?: (data: any) => void;
     private onPlayerDefend?: (data: any) => void;
     private onTurnEnd?: (data: any) => void;
+    private onTurnStart?: (data: any) => void;
     private onSpecialEvent?: (data: any) => void;
     private onPlayerStateUpdate?: (data: any) => void;
     private onGameOver?: (data: any) => void;
@@ -325,6 +326,11 @@ export class SocketClient {
             this.onTurnEnd?.(data);
         });
 
+        this.socket.on('turn-start', (data) => {
+            console.log('🔄 턴 시작 수신:', data);
+            this.onTurnStart?.(data);
+        });
+
         this.socket.on('special-event', (data) => {
             console.log('✨ 특수 이벤트 수신:', data);
             this.onSpecialEvent?.(data);
@@ -411,6 +417,10 @@ export class SocketClient {
 
     public setOnTurnEnd(callback: (data: any) => void): void {
         this.onTurnEnd = callback;
+    }
+
+    public setOnTurnStart(callback: (data: any) => void): void {
+        this.onTurnStart = callback;
     }
 
     public setOnSpecialEvent(callback: (data: any) => void): void {

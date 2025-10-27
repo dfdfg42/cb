@@ -1,0 +1,264 @@
+{
+  "title": "갓필드 (정리된 데이터)",
+  "language": "ko",
+  "sections": [
+    {
+      "id": "artifacts",
+      "title": "성물 (Artifact)",
+      "description": "게임 핵심 카드. 대부분 1회용. 시작 시 9장 보유, 사용한 성물은 턴 끝에 랜덤으로 보충. 기본적으로 턴에 1장 사용(특수 상황은 예외).",
+      "subsections": [
+        {
+          "id": "attributes",
+          "title": "속성",
+          "description": "성물/무기/방어구/기적에 붙는 속성. 총 4종류(화, 수, 광, 암).",
+          "items": [
+            {
+              "name": "화속성",
+              "category": "속성",
+              "strong_against": "수속성 방어구",
+              "notes": "상성 규칙이 존재."
+            },
+            {
+              "name": "수속성",
+              "category": "속성",
+              "strong_against": "화속성 방어구"
+            },
+            {
+              "name": "광속성",
+              "category": "속성",
+              "notes": "원칙상 방어 불가능. 레인보우 커튼으로만 속성 제거 시 방어 가능. 광속성 방어구는 네 속성 공격을 방어."
+            },
+            {
+              "name": "암속성",
+              "category": "속성",
+              "special_effects": [
+                "어떤 속성으로든 방어 가능",
+                "암속성 피해시 태양의 가호가 없으면 HP와 상관없이 즉시 승천(즉사)"
+              ],
+              "notes": "부분적으로 데미지를 남겨 넘기는 대응 불가 — 전부 막아야 함."
+            }
+          ]
+        },
+        {
+          "id": "weapons",
+          "title": "무기",
+          "description": "주된 공격 수단. 단일타겟(명중 확률 없음)과 전체공격(명중확률 표기)으로 구분. '+ 공격' 표기는 조합 가능 무기.",
+          "items": [
+            {
+              "name": "지옥의 가위",
+              "category": "무기",
+              "stats": { "attack": 8 },
+              "special_effects": ["지옥병 부여(상태 이상)"]
+            },
+            {
+              "name": "신의 검",
+              "category": "무기",
+              "stats": { "attack": 30 },
+              "stats_note": "가격 30",
+              "notes": "무속성, 벽/반사검 계열에 효과 반감 가능."
+            },
+            {
+              "name": "반사검 / 난탄무검",
+              "category": "무기",
+              "special_effects": ["무속성 공격을 튕겨냄 / 되받아침(반사)"],
+              "notes": "기적 방어에도 영향."
+            },
+            {
+              "name": "고스트 소드 / 리얼 고스트 소드",
+              "category": "무기",
+              "special_effects": ["가한 대미지만큼 HP 흡수"],
+              "notes": "+ 공격과 조합 시에도 흡수 효과 유지"
+            },
+            {
+              "name": "요물의 대검",
+              "category": "무기",
+              "special_effects": ["가한 대미지만큼 사용자도 피해 (반동)"],
+              "notes": "+ 공격으로 증폭 가능"
+            },
+            {
+              "name": "금/은/동 곤봉",
+              "category": "무기",
+              "stats": { "attack": 1 },
+              "price": { "금": [1, 10, 25] },
+              "notes": "저가 무기(공격 1). 은/금은 판매 성물과 시너지."
+            },
+            {
+              "name": "매지컬 스틱",
+              "category": "무기",
+              "special_effects": [
+                "사용자의 MP 전부 소모하여 소모MP x2 만큼 무속성 대미지"
+              ]
+            },
+            {
+              "name": "윙윙톱",
+              "category": "무기",
+              "stats": { "attack_per_hit": 3, "hits": 2 },
+              "notes": "두 번 공격. + 공격과 조합 시 총합 대미지 증가."
+            },
+            {
+              "name": "다이아몬드 소드",
+              "category": "무기",
+              "stats": { "attribute": "토", "attack": 13 },
+              "price": 25,
+              "notes": "속성 단일 타겟 무기 중 최고 수준 공격력."
+            },
+            {
+              "name": "승천궁",
+              "category": "무기",
+              "special_effects": [
+                "평소: 25% 확률로 광속성 전체 공격 1",
+                "승천 시: 75% 확률로 공격 30 발동(유령 리스크)"
+              ],
+              "notes": "승천 상황에서 복합 효과로 위험/기회 제공."
+            },
+            {
+              "name": "위험한 절굿공이",
+              "category": "무기",
+              "stats": { "attribute": "광", "attack": 30 },
+              "special_effects": [
+                "랜덤 타겟(사용자 포함)에 공격",
+                "사용자가 대상이 되면 방어 불가"
+              ],
+              "notes": "다인전에서 심각한 리스크(자기 팀 공격 가능)."
+            }
+          ]
+        },
+        {
+          "id": "miracles",
+          "title": "기적 (마법)",
+          "description": "MP를 소모해 사용하는 다회용 성물(마법). 사용하면 우하단에 저장되어 MP가 있으면 반복 사용 가능. 기적은 인벤토리를 차지하고 이름에 <> 포함.",
+          "items": [
+            {
+              "name": "<불덩어리>",
+              "category": "기적",
+              "stats": { "attribute": "화", "attack": 2, "mp_cost": 2 }
+            },
+            {
+              "name": "<얼음>",
+              "category": "기적",
+              "stats": { "attribute": "수", "attack": 4, "mp_cost": 2 }
+            },
+            {
+              "name": "<어둠>",
+              "category": "기적",
+              "stats": { "attribute": "암", "attack": 5, "mp_cost": 5 }
+            },
+            {
+              "name": "<흡수>",
+              "category": "기적",
+              "stats": { "attribute": "광", "attack": 10, "mp_cost": 10 },
+              "special_effects": ["HP 흡수"]
+            },
+            {
+              "name": "<유성>",
+              "category": "기적",
+              "stats": { "attribute": "광", "attack": 10, "mp_cost": 7 },
+              "special_effects": ["+공격 10 (조합 가능)"]
+            },
+            {
+              "name": "<연기>",
+              "category": "기적",
+              "stats": { "attribute": "화", "mp_cost": 4 },
+              "special_effects": ["75% 확률로 전체공격 5"]
+            },
+            {
+              "name": "<눈사태>",
+              "category": "기적",
+              "stats": { "attribute": "수", "mp_cost": 6 },
+              "special_effects": ["75% 확률로 전체공격 8"]
+            },
+            {
+              "name": "<천둥>",
+              "category": "기적",
+              "stats": { "attribute": "광", "mp_cost": 4 },
+              "special_effects": ["25% 확률로 전체공격 10"]
+            },
+            {
+              "name": "<토석류>",
+              "category": "기적",
+              "stats": { "attribute": "토", "mp_cost": 6 },
+              "special_effects": ["50% 확률로 전체공격 12"]
+            },
+            {
+              "name": "<마그마>",
+              "category": "기적",
+              "stats": { "attribute": "화", "mp_cost": 10 },
+              "special_effects": ["75% 확률로 전체공격 15"]
+            }
+          ]
+        },
+        {
+          "id": "field_magic",
+          "title": "필드마법",
+          "description": "기적 <해방>이나 수호 봉인 항아리로 발동되는 효과. 상대 턴 종료마다 25% 확률로 고유 행동 실행.",
+          "items": [
+            {
+              "name": "수성신",
+              "category": "필드마법",
+              "attribute": "수",
+              "effects": [
+                {
+                  "prob": 30,
+                  "action": "이슬비",
+                  "effect": "50% 확률 Atk 1 + 안개"
+                },
+                { "prob": 25, "action": "희미한 숨", "effect": "Atk 2 + 안개" },
+                { "prob": 20, "action": "물보라", "effect": "50% Atk 3" },
+                { "prob": 15, "action": "거품", "effect": "Atk 3" },
+                { "prob": 10, "action": "싸라기눈", "effect": "50% Atk 6" }
+              ]
+            },
+            {
+              "name": "화성신",
+              "category": "필드마법",
+              "attribute": "화",
+              "effects": [
+                { "prob": 30, "action": "불의 속삭임", "effect": "75% Atk 3" },
+                {
+                  "prob": 25,
+                  "action": "불의 중얼거림",
+                  "effect": "75% Atk 4"
+                },
+                {
+                  "prob": 20,
+                  "action": "불의 재잘거림",
+                  "effect": "75% Atk 5"
+                },
+                { "prob": 15, "action": "불의 소리", "effect": "75% Atk 6" },
+                { "prob": 10, "action": "불의 외침", "effect": "75% Atk 7" }
+              ]
+            },
+            {
+              "name": "천왕신",
+              "category": "필드마법",
+              "attribute": "광",
+              "effects": [
+                { "prob": 30, "action": "점멸", "effect": "光 Atk 2" },
+                { "prob": 25, "action": "전기충격", "effect": "光 25% Atk 4" },
+                { "prob": 20, "action": "후광", "effect": "재앙 섬광" },
+                { "prob": 15, "action": "축복", "effect": "光 Atk5 + HP 흡수" },
+                { "prob": 10, "action": "레이저 빔", "effect": "光 75% Atk10" }
+              ]
+            },
+            {
+              "name": "명왕신",
+              "category": "필드마법",
+              "attribute": "암",
+              "effects": [
+                { "prob": 30, "action": "생각", "effect": "暗 25% Atk1" },
+                { "prob": 25, "action": "깜박임", "effect": "暗 Atk2" },
+                {
+                  "prob": 20,
+                  "action": "불길한 예감",
+                  "effect": "재앙 먹구름"
+                },
+                { "prob": 15, "action": "헛기침", "effect": "暗 Atk4" },
+                { "prob": 10, "action": "거수", "effect": "暗 Atk8" }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

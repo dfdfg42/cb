@@ -3,6 +3,10 @@ import { Player } from '../types';
 export class CombatUI {
     private attackerCardsContainer: HTMLElement;
     private defenderCardsContainer: HTMLElement;
+    private summaryPlayersEl: HTMLElement | null = null;
+    private summaryCardsEl: HTMLElement | null = null;
+    private summaryDamageEl: HTMLElement | null = null;
+    private summaryDebuffsEl: HTMLElement | null = null;
 
     constructor() {
         const attackerCards = document.getElementById('attacker-cards');
@@ -14,6 +18,12 @@ export class CombatUI {
 
         this.attackerCardsContainer = attackerCards;
         this.defenderCardsContainer = defenderCards;
+
+        // summary elements (optional)
+        this.summaryPlayersEl = document.getElementById('summary-players');
+        this.summaryCardsEl = document.getElementById('summary-cards');
+        this.summaryDamageEl = document.getElementById('summary-damage');
+        this.summaryDebuffsEl = document.getElementById('summary-debuffs');
     }
 
     public showAttackCards(cards: any[]): void {
@@ -43,6 +53,23 @@ export class CombatUI {
     public clearCombat(): void {
         this.attackerCardsContainer.innerHTML = '';
         this.defenderCardsContainer.innerHTML = '';
+        if (this.summaryPlayersEl) this.summaryPlayersEl.textContent = '- → -';
+        if (this.summaryCardsEl) this.summaryCardsEl.textContent = '-';
+        if (this.summaryDamageEl) this.summaryDamageEl.textContent = '0';
+        if (this.summaryDebuffsEl) this.summaryDebuffsEl.textContent = '-';
+    }
+
+    public showSummary(attackerName: string, defenderName: string, cards: any[], damage: number, debuffs?: string[]): void {
+        if (this.summaryPlayersEl) this.summaryPlayersEl.textContent = `${attackerName} → ${defenderName}`;
+        if (this.summaryCardsEl) {
+            if (!cards || cards.length === 0) {
+                this.summaryCardsEl.textContent = '-';
+            } else {
+                this.summaryCardsEl.textContent = cards.map((c: any) => c.name).join(', ');
+            }
+        }
+        if (this.summaryDamageEl) this.summaryDamageEl.textContent = String(damage || 0);
+        if (this.summaryDebuffsEl) this.summaryDebuffsEl.textContent = (debuffs && debuffs.length > 0) ? debuffs.join(', ') : '-';
     }
 
     public showDamageAnimation(_targetPlayer: Player, damage: number): void {

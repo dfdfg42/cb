@@ -169,7 +169,8 @@ export class GameManager {
         this.session.defenderId = defenderId;
         this.session.state = GameState.DEFENDING;
 
-        uiManager.updateCombatNames(
+        // 공격이 확정되었을 때만 중앙 전투 이름을 표시합니다.
+        uiManager.showCombatNames(
             this.getCurrentPlayer().name,
             defender.name
         );
@@ -306,8 +307,11 @@ export class GameManager {
 
         // 데미지 적용
         this.applyDamage(defender, finalHealthDamage, totalMentalDamage);
-
         this.endAttackPhase();
+
+        // 공격/방어 한 사이클이 끝나면 다음 플레이어로 턴을 넘깁니다.
+        // (연쇄 대응이나 반사/튕기기는 위에서 return 처리되어 여기로 오지 않습니다.)
+        this.endTurn();
     }
 
     private applyDamage(player: Player, healthDamage: number, mentalDamage: number): void {
@@ -343,6 +347,7 @@ export class GameManager {
         const debuffTypes = [
             DebuffType.CARD_DECAY,
             DebuffType.RANDOM_TARGET,
+            DebuffType.MENTAL_DRAIN,
             DebuffType.DAMAGE_INCREASE
         ];
 
@@ -358,6 +363,7 @@ export class GameManager {
         const debuffNames = {
             [DebuffType.CARD_DECAY]: '카드 소멸 저주',
             [DebuffType.RANDOM_TARGET]: '혼돈의 저주',
+            [DebuffType.MENTAL_DRAIN]: '정신력 고갈',
             [DebuffType.DAMAGE_INCREASE]: '취약 저주'
         };
 
@@ -500,7 +506,7 @@ export class GameManager {
         this.session.attackerId = undefined;
         this.session.defenderId = undefined;
         
-        uiManager.updateCombatNames('-', '-');
+    uiManager.clearCombatNames();
     }
 
     public endTurn(): void {

@@ -1,6 +1,6 @@
 import './styles/main.css';
 import { uiManager } from './ui/UIManager';
-import { Screen, Player, Card, CardType } from './types';
+import { Screen, Player } from './types';
 import { HandManager } from './ui/CardComponent';
 import { PlayersManager } from './ui/PlayerComponent';
 import { drawRandomCards } from './data/cards';
@@ -25,6 +25,56 @@ class Game {
         this.initializeEventListeners();
         this.setupSocketListeners();
         console.log('🎮 카드 배틀 게임 시작!');
+        // MutationObserver for debugging: track creation/removal/attribute changes of #summary-take-btn
+        try {
+            const observeBtn = () => {
+                const btn = document.getElementById('summary-take-btn') as HTMLButtonElement | null;
+                if (btn) {
+                    console.log('[MUTATION-DEBUG] summary-take-btn currently in DOM; display=', btn.style.display, ' onclick=', !!btn.onclick, ' classes=', btn.className);
+                } else {
+                    console.log('[MUTATION-DEBUG] summary-take-btn NOT in DOM');
+                }
+            };
+
+            const observer = new MutationObserver((mutations) => {
+                mutations.forEach(m => {
+                    // log added/removed nodes
+                    if (m.addedNodes && m.addedNodes.length > 0) {
+                        m.addedNodes.forEach(n => {
+                            if (n instanceof HTMLElement) {
+                                if (n.id === 'summary-take-btn' || n.querySelector && n.querySelector('#summary-take-btn')) {
+                                    console.log('[MUTATION-DEBUG] summary-take-btn added to DOM via node:', n);
+                                }
+                            }
+                        });
+                    }
+                    if (m.removedNodes && m.removedNodes.length > 0) {
+                        m.removedNodes.forEach(n => {
+                            if (n instanceof HTMLElement) {
+                                if (n.id === 'summary-take-btn' || (n.querySelector && n.querySelector('#summary-take-btn'))) {
+                                    console.log('[MUTATION-DEBUG] summary-take-btn removed from DOM via node:', n);
+                                }
+                            }
+                        });
+                    }
+                    // attribute changes can hide/show button via style/class
+                    if (m.type === 'attributes' && m.target instanceof HTMLElement) {
+                        const target = m.target as HTMLElement;
+                        if (target.id === 'summary-take-btn') {
+                            console.log('[MUTATION-DEBUG] summary-take-btn attribute changed:', m.attributeName, ' value=', target.getAttribute(m.attributeName || '') , ' style.display=', target.style.display);
+                        }
+                    }
+                });
+                // also sample current state
+                observeBtn();
+            });
+
+            observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class'] });
+            // sample initial state
+            observeBtn();
+        } catch (e) {
+            console.warn('[MUTATION-DEBUG] failed to attach observer', e);
+        }
     }
     
     private initializeEventListeners(): void {
@@ -224,18 +274,29 @@ class Game {
         // 게임 시작
         socketClient.setOnGameStarting((data) => {
             console.log('게임 시작!');
-            uiManager.showAlert('게임이 곧 시작됩니다!');
-            
-            // 멀티플레이어 게임 초기화
-            setTimeout(() => {
-                this.startMultiplayerGame(data.room.players);
-            }, 2000);
+            // 멀티플레이어 게임 초기화 — 즉시 시작하도록 변경 (기존에는 2초 대기)
+            this.startMultiplayerGame(data.room.players);
         });
 
         // 권위적 공격 결과 수신 (서버에서 계산된 최종 결과)
         socketClient.setOnAttackResolved((resolved: any) => {
             console.log('권위적 공격 결과 수신:', resolved);
             if (!this.gameManager) return;
+
+            // clear any pending countdown interval when an attack is resolved
+            if ((this as any)._pendingCountdownInterval) {
+                clearInterval((this as any)._pendingCountdownInterval);
+                (this as any)._pendingCountdownInterval = undefined;
+            }
+            const tEl = document.getElementById('summary-timer');
+            if (tEl) tEl.textContent = '-';
+
+            // hide central take-it button if visible
+            const summaryTakeBtn = document.getElementById('summary-take-btn') as HTMLButtonElement | null;
+            if (summaryTakeBtn) {
+                summaryTakeBtn.style.display = 'none';
+                summaryTakeBtn.onclick = null;
+            }
 
             const attacker = this.gameManager.getPlayerById(resolved.attackerId);
             const target = this.gameManager.getPlayerById(resolved.targetId);
@@ -256,12 +317,81 @@ class Game {
                 (target as any).isAlive = !resolved.eliminated;
             }
 
-            // 사용된 카드 제거 (공격자 손패)
-            if (attacker && resolved.cardsUsed && Array.isArray(resolved.cardsUsed)) {
-                resolved.cardsUsed.forEach((c: any) => {
-                    const idx = attacker.cards.findIndex((x: any) => x.id === c.id);
-                    if (idx !== -1) attacker.cards.splice(idx, 1);
-                });
+            // 사용된 카드 제거 (공격자 손패) — 서버가 보낸 카드 객체/ids를 사용
+            try {
+                const cardsUsed = Array.isArray(resolved.cardsUsed) ? resolved.cardsUsed : [];
+                const cardsUsedIds = Array.isArray(resolved.cardsUsedIds) ? resolved.cardsUsedIds : cardsUsed.map((c:any)=>c && c.id).filter(Boolean);
+
+                if (attacker) {
+                    // remove non-magic used cards from attacker's hand and draw replacements
+                    let removedCount = 0;
+                    cardsUsed.forEach((c: any) => {
+                        if (!c || !c.id) return;
+                        // 마법 카드는 소모 예외일 수 있으므로(요청대로) 마법/필드마법은 제거하지 않음
+                        if (c.type === 'magic' || c.type === 'field-magic') return;
+                        const idx = attacker.cards.findIndex((x: any) => x.id === c.id);
+                        if (idx !== -1) {
+                            attacker.cards.splice(idx, 1);
+                            removedCount++;
+                        }
+                    });
+
+                    // If server provided ids only (no full objects), remove by ids
+                    if (removedCount === 0 && Array.isArray(cardsUsedIds) && cardsUsedIds.length > 0) {
+                        cardsUsedIds.forEach((id: string) => {
+                            const idx = attacker.cards.findIndex((x: any) => x.id === id);
+                            if (idx !== -1) {
+                                attacker.cards.splice(idx, 1);
+                                removedCount++;
+                            }
+                        });
+                    }
+
+                    // draw replacement cards equal to removedCount
+                    if (removedCount > 0) {
+                        const newCards = drawRandomCards(removedCount);
+                        attacker.cards.push(...newCards);
+                        uiManager.addLogMessage(`${attacker.name}이(가) ${removedCount}장의 카드를 보충했습니다.`);
+                    }
+                }
+            } catch (e) {
+                console.warn('사용된 카드 제거 중 오류:', e);
+            }
+            // 방어에 사용된 카드 제거 (방어자 손패)
+            try {
+                const defenseCards = Array.isArray(resolved.defenseCards) ? resolved.defenseCards : [];
+                const defenseCardIds = Array.isArray(resolved.defenseCardIds) ? resolved.defenseCardIds : defenseCards.map((c:any)=>c && c.id).filter(Boolean);
+
+                if (target) {
+                    let removedDefCount = 0;
+                    defenseCards.forEach((c: any) => {
+                        if (!c || !c.id) return;
+                        const idx = target.cards.findIndex((x: any) => x.id === c.id);
+                        if (idx !== -1) {
+                            target.cards.splice(idx, 1);
+                            removedDefCount++;
+                        }
+                    });
+
+                    // fallback by ids
+                    if (removedDefCount === 0 && Array.isArray(defenseCardIds) && defenseCardIds.length > 0) {
+                        defenseCardIds.forEach((id: string) => {
+                            const idx = target.cards.findIndex((x: any) => x.id === id);
+                            if (idx !== -1) {
+                                target.cards.splice(idx, 1);
+                                removedDefCount++;
+                            }
+                        });
+                    }
+
+                    if (removedDefCount > 0) {
+                        const newCards = drawRandomCards(removedDefCount);
+                        target.cards.push(...newCards);
+                        uiManager.addLogMessage(`${target.name}이(가) ${removedDefCount}장의 카드를 보충했습니다.`);
+                    }
+                }
+            } catch (e) {
+                console.warn('방어 카드 제거 중 오류:', e);
             }
 
             // UI 갱신
@@ -288,7 +418,18 @@ class Game {
 
             // Combat UI 정리
             if (this.combatUI) {
-                setTimeout(() => this.combatUI!.clearCombat(), 1200);
+                // show final summary including applied debuffs and defense cards
+                try {
+                    const attackerName = resolved.attackerName || (this.gameManager && this.gameManager.getPlayerById(resolved.attackerId)?.name) || '-';
+                    const defenderName = resolved.targetName || (this.gameManager && this.gameManager.getPlayerById(resolved.targetId)?.name) || '-';
+                    const usedCards = resolved.cardsUsed || [];
+                    const damageApplied = resolved.damageApplied || 0;
+                    const appliedDebuffs = resolved.appliedDebuffs || [];
+                    this.combatUI.showSummary(attackerName, defenderName, usedCards, damageApplied, appliedDebuffs);
+                    setTimeout(() => this.combatUI!.clearCombat(), 1200);
+                } catch (e) {
+                    setTimeout(() => this.combatUI!.clearCombat(), 1200);
+                }
             }
             // 손패 입력 재활성화 (로컬 플레이어의 턴인 경우)
             if (this.handManager) {
@@ -297,6 +438,10 @@ class Game {
                 const local = this.gameManager.getLocalPlayer();
                 this.handManager.clearHand();
                 this.handManager.addCards(local.cards);
+                // restore confirm button to attack action (in case it was replaced during defense)
+                this.restoreConfirmButton();
+                // clear any stored pending defense request id
+                this.pendingDefenseRequestId = null;
             }
         });
 
@@ -313,6 +458,14 @@ class Game {
                 this.combatUI.showAttackCards(data.cardsUsed || []);
                 // reset any previous defender cards
                 this.combatUI.showDefenseCards([]);
+                // also show the combat summary in the center (attacker -> defender, cards, damage)
+                try {
+                    const attackerName = data.attackerName || (this.gameManager && this.gameManager.getPlayerById(data.attackerId)?.name) || '-';
+                    const defenderName = data.targetName || (this.gameManager && this.gameManager.getPlayerById(data.targetId)?.name) || '-';
+                    this.combatUI.showSummary(attackerName, defenderName, data.cardsUsed || [], data.damage || 0, []);
+                } catch (e) {
+                    // ignore
+                }
             }
 
             // hide inline action buttons until defend-request arrives
@@ -327,6 +480,7 @@ class Game {
             console.log('defend-request handler in client', data);
             // store request id for confirmDefense
             this.pendingDefenseRequestId = data.requestId;
+            console.log(`[DEBUG] pendingDefenseRequestId set -> ${this.pendingDefenseRequestId}`);
 
             const attrEl = document.getElementById('defend-attribute');
             const dmgEl = document.getElementById('defend-damage');
@@ -339,7 +493,150 @@ class Game {
                 this.combatUI.showDefenseCards([]);
             }
 
-            // enable inline action buttons (no modal)
+            // If the local player is the defender, enter defense selection mode and mark eligible cards
+            if (data.defenderId === this.currentPlayerId) {
+                // Do NOT open the blocking modal. Instead, show attack info in the central combat UI
+                // so the defender can select defense cards from the hand below.
+                // Ensure central names/cards are visible
+                try {
+                    const attacker = this.gameManager!.getPlayerById(data.attackerId);
+                    const defender = this.gameManager!.getPlayerById(data.targetId || data.defenderId);
+                    if (attacker && defender) uiManager.showCombatNames(attacker.name, defender.name);
+                } catch (e) {
+                    // ignore if gameManager not available
+                }
+
+                // show attacker cards centrally (already done above, but ensure)
+                if (this.combatUI) {
+                    this.combatUI.showAttackCards(data.cardsUsed || []);
+                    this.combatUI.showDefenseCards([]);
+                }
+
+                // enable defender hand and mark eligible defense cards based on attribute
+                if (this.handManager) {
+                    console.log('[DEBUG] entering defense selection mode for local defender');
+                    this.handManager.clearSelection();
+                    // refresh local hand from game state
+                    const local = this.gameManager!.getLocalPlayer();
+                    console.log(`[DEBUG] local hand cards count before refresh: ${local.cards.length}`);
+                    this.handManager.clearHand();
+                    this.handManager.addCards(local.cards);
+                    this.handManager.markEligibleDefense(data.attackAttribute);
+                    this.handManager.setEnabled(true);
+                    console.log('[DEBUG] handManager marked eligible defenses and enabled');
+                }
+
+                // give a clear instruction in-game (non-blocking banner)
+                uiManager.addLogMessage('방어할 카드를 선택하세요. 선택 후 하단의 확정 버튼을 눌러주세요.');
+
+                // Wire confirm button to confirmDefense for defender
+                const confirmBtn = document.getElementById('confirm-btn');
+                if (confirmBtn) {
+                    const newConfirmBtn = confirmBtn.cloneNode(true) as HTMLElement;
+                    confirmBtn.parentNode?.replaceChild(newConfirmBtn, confirmBtn);
+                    newConfirmBtn.addEventListener('click', () => this.confirmDefense());
+                    // enable confirm button initially disabled state depends on selection handler
+                }
+
+                // start an auto-take timeout (e.g., 20s) to avoid stalling the game
+                const expiresAt = data.expiresAt || (Date.now() + 20000);
+                // show initial timer value
+                const timerEl = document.getElementById('summary-timer');
+                if (timerEl) {
+                    const sec = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
+                    timerEl.textContent = `${sec}s`;
+                    timerEl.classList.add('timer');
+                }
+
+                // clear previous timers if any
+                if ((this as any)._pendingDefenseTimer) clearTimeout((this as any)._pendingDefenseTimer);
+                if ((this as any)._pendingCountdownInterval) clearInterval((this as any)._pendingCountdownInterval);
+
+                if (this.pendingDefenseRequestId) {
+                    (this as any)._pendingDefenseTimer = setTimeout(() => {
+                        // auto take it (send empty defense)
+                        if (this.isMultiplayer && this.pendingDefenseRequestId) {
+                            socketClient.sendDefendWithRequest(this.pendingDefenseRequestId!, this.currentPlayerId, [], 0);
+                        }
+                        // disable hand selection after auto-take
+                        if (this.handManager) this.handManager.setEnabled(false);
+                        // clear combat names after auto-resolve
+                        uiManager.clearCombatNames();
+                        // clear countdown interval and UI
+                        if ((this as any)._pendingCountdownInterval) {
+                            clearInterval((this as any)._pendingCountdownInterval);
+                            (this as any)._pendingCountdownInterval = undefined;
+                        }
+                        const tEl = document.getElementById('summary-timer');
+                        if (tEl) tEl.textContent = '-';
+                        (this as any)._pendingDefenseTimer = undefined;
+                    }, Math.max(1000, (expiresAt - Date.now())));
+
+                    // start a countdown interval to update the timer display
+                    (this as any)._pendingCountdownInterval = setInterval(() => {
+                        const now = Date.now();
+                        const remainingMs = expiresAt - now;
+                        const tEl = document.getElementById('summary-timer');
+                        if (tEl) {
+                            if (remainingMs <= 0) {
+                                tEl.textContent = '0s';
+                            } else {
+                                tEl.textContent = `${Math.ceil(remainingMs / 1000)}s`;
+                            }
+                        }
+                        if (remainingMs <= 0) {
+                            if ((this as any)._pendingCountdownInterval) {
+                                clearInterval((this as any)._pendingCountdownInterval);
+                                (this as any)._pendingCountdownInterval = undefined;
+                            }
+                        }
+                    }, 250);
+                }
+
+                // ensure the old modal (if active) is hidden so it doesn't block clicks
+                uiManager.hideModal('defend-modal');
+
+                // show central "그냥 맞기" button and wire it to send empty defense
+                const summaryTakeBtnLocal = document.getElementById('summary-take-btn') as HTMLButtonElement | null;
+                if (summaryTakeBtnLocal) {
+                    console.log('[DEBUG] summaryTakeBtn element found; display before show =', summaryTakeBtnLocal.style.display, ' onclick=', !!summaryTakeBtnLocal.onclick);
+                    summaryTakeBtnLocal.style.display = 'inline-block';
+                    console.log('[DEBUG] summaryTakeBtn set to visible');
+                    summaryTakeBtnLocal.onclick = () => {
+                        console.log('[DEBUG] summary take-it button clicked');
+                        if (this.isMultiplayer && this.pendingDefenseRequestId) {
+                            console.log(`[DEBUG] auto-sending empty defense for request ${this.pendingDefenseRequestId}`);
+                            socketClient.sendDefendWithRequest(this.pendingDefenseRequestId!, this.currentPlayerId, [], 0);
+                        }
+                        // disable hand selection after action
+                        if (this.handManager) this.handManager.setEnabled(false);
+                        // hide the button and clear handler
+                        summaryTakeBtnLocal.style.display = 'none';
+                        summaryTakeBtnLocal.onclick = null;
+                        // clear pending timers/intervals
+                        if ((this as any)._pendingDefenseTimer) {
+                            clearTimeout((this as any)._pendingDefenseTimer);
+                            (this as any)._pendingDefenseTimer = undefined;
+                        }
+                        if ((this as any)._pendingCountdownInterval) {
+                            clearInterval((this as any)._pendingCountdownInterval);
+                            (this as any)._pendingCountdownInterval = undefined;
+                        }
+                        const tElLocal = document.getElementById('summary-timer');
+                        if (tElLocal) tElLocal.textContent = '-';
+                        // clear combat names and stored request id
+                        uiManager.clearCombatNames();
+                        console.log('[DEBUG] clearing pendingDefenseRequestId');
+                        this.pendingDefenseRequestId = null;
+                    };
+                } else {
+                    console.log('[DEBUG] summaryTakeBtn element NOT found when trying to show it');
+                }
+
+                return;
+            }
+
+            // enable inline action buttons for non-local defenders (view-only)
             const useBtn = document.getElementById('use-defense-btn') as HTMLButtonElement | null;
             const takeBtn = document.getElementById('take-it-btn') as HTMLButtonElement | null;
             if (useBtn) {
@@ -383,7 +680,8 @@ class Game {
             const target = this.gameManager.getPlayerById(data.targetId);
             
             if (attacker && target) {
-                uiManager.updateCombatNames(attacker.name, target.name);
+                // 서버로부터 공격이 실제로 발생한 경우에만 중앙 공격/방어자 이름을 표시
+                uiManager.showCombatNames(attacker.name, target.name);
                 uiManager.addLogMessage(`${attacker.name}이(가) ${target.name}을(를) 공격! (${data.damage} 데미지)`);
                 this.playersManager.refreshAll();
             }
@@ -422,6 +720,36 @@ class Game {
                     this.handManager?.setEnabled(false);
                 }
             }
+        });
+
+        // turn-start 이벤트: 서버에서 권위적으로 현재 플레이어와 턴을 전송
+        socketClient.setOnTurnStart((data) => {
+            console.log('턴 시작 수신 (서버 권위):', data);
+            console.log(`  로컬 플레이어: ${this.currentPlayerId}, 현재 턴 플레이어: ${data.currentPlayerId}`);
+            if (!this.gameManager) return;
+
+            // 서버에서 보낸 currentPlayerId와 currentTurn을 받아 클라이언트 상태 동기화
+            const session = this.gameManager.getSession();
+            session.currentPlayerId = data.currentPlayerId;
+            session.currentTurn = data.currentTurn;
+            
+            const currentPlayer = this.gameManager.getPlayerById(data.currentPlayerId);
+            if (currentPlayer) {
+                uiManager.addLogMessage(`${currentPlayer.name}의 턴입니다!`);
+                this.playersManager.setActivePlayer(data.currentPlayerId);
+
+                // 로컬 플레이어의 턴이면 카드 활성화
+                if (data.currentPlayerId === this.currentPlayerId) {
+                    console.log(`✅ 로컬 플레이어 턴: 손패 활성화`);
+                    this.handManager?.setEnabled(true);
+                } else {
+                    console.log(`❌ 다른 플레이어 턴: 손패 비활성화`);
+                    this.handManager?.setEnabled(false);
+                }
+            }
+            
+            // 턴 번호 업데이트
+            uiManager.updateTurnNumber(data.currentTurn);
         });
         
         // 특수 이벤트 수신
@@ -815,7 +1143,7 @@ class Game {
         uiManager.showModal('target-selection-modal');
     }
 
-    private showDefenseSelection(defenderId: string): void {
+    private showDefenseSelection(defenderId: string, attackAttribute?: any): void {
         if (!this.gameManager) return;
 
         const defender = this.gameManager.getSession().players.find(p => p.id === defenderId);
@@ -827,6 +1155,18 @@ class Game {
         const localPlayer = this.gameManager.getLocalPlayer();
         this.handManager!.clearHand();
         this.handManager!.addCards(localPlayer.cards);
+
+        // 방어 선택 모드: 속성에 맞는 방어 카드만 활성화
+        if (this.handManager) {
+            let attr = attackAttribute;
+            if (!attr && this.gameManager) {
+                // 세션의 공격 카드에서 속성 추출(첫 공격 카드 기준)
+                const session = this.gameManager.getSession();
+                const firstAttack = session.attackCards && session.attackCards.length > 0 ? session.attackCards[0] : undefined;
+                attr = firstAttack ? (firstAttack as any).attribute : undefined;
+            }
+            this.handManager.markEligibleDefense(attr);
+        }
         
         // 방어 확정 버튼 이벤트 재설정
         const confirmBtn = document.getElementById('confirm-btn');
@@ -840,34 +1180,7 @@ class Game {
         }
     }
 
-    // 중앙 인라인 타겟 선택 UI 표시 (게임 화면 내)
-    private showInlineTargetSelection(targets: Player[], onSelect: (id: string) => void): void {
-        // 제거되어 있으면 우선 제거
-        this.hideInlineTargetSelection();
-
-        const battleField = document.querySelector('.battle-field') as HTMLElement | null;
-        if (!battleField) return;
-
-        const overlay = document.createElement('div');
-        overlay.id = 'inline-target-selection';
-        overlay.className = 'inline-target-overlay';
-
-        const container = document.createElement('div');
-        container.className = 'inline-target-container';
-
-        targets.forEach(t => {
-            const btn = document.createElement('button');
-            btn.className = 'inline-target-btn';
-            btn.textContent = t.name;
-            btn.addEventListener('click', () => {
-                onSelect(t.id);
-            });
-            container.appendChild(btn);
-        });
-
-        overlay.appendChild(container);
-        battleField.appendChild(overlay);
-    }
+    // (inline target selection UI removed — target selection now happens on confirm)
 
     private hideInlineTargetSelection(): void {
         const existing = document.getElementById('inline-target-selection');
@@ -876,6 +1189,10 @@ class Game {
 
     private confirmDefense(): void {
         if (!this.gameManager || !this.handManager) return;
+
+        console.log('[DEBUG] confirmDefense invoked, pendingDefenseRequestId=', this.pendingDefenseRequestId);
+        const selDebug = this.handManager.getSelectedCards().map(c=>c.name).join(', ');
+        console.log('[DEBUG] selected defense cards:', selDebug || '(none)');
 
         const selectedCards = this.handManager.getSelectedCards();
         
@@ -898,6 +1215,7 @@ class Game {
             const totalDefense = selectedCards.reduce((sum, card) => sum + card.defense, 0);
             if (this.pendingDefenseRequestId) {
                 // send with requestId so server can match pending attack
+                console.log(`[DEBUG] sending defendWithRequest id=${this.pendingDefenseRequestId} defense=${totalDefense}`);
                 socketClient.sendDefendWithRequest(this.pendingDefenseRequestId, this.currentPlayerId, selectedCards, totalDefense);
             } else {
                 socketClient.sendDefend(this.currentPlayerId, selectedCards, totalDefense);
@@ -907,6 +1225,21 @@ class Game {
             const takeBtn = document.getElementById('take-it-btn') as HTMLButtonElement | null;
             if (useBtn) { useBtn.style.display = 'none'; useBtn.onclick = null; }
             if (takeBtn) { takeBtn.style.display = 'none'; takeBtn.onclick = null; }
+            // hide defend modal and disable hand selection for defender
+            uiManager.hideModal('defend-modal');
+            if (this.handManager) this.handManager.setEnabled(false);
+            // clear pending defense request id and any timeout/interval
+            this.pendingDefenseRequestId = null;
+            if ((this as any)._pendingDefenseTimer) {
+                clearTimeout((this as any)._pendingDefenseTimer);
+                (this as any)._pendingDefenseTimer = undefined;
+            }
+            if ((this as any)._pendingCountdownInterval) {
+                clearInterval((this as any)._pendingCountdownInterval);
+                (this as any)._pendingCountdownInterval = undefined;
+            }
+            const tEl = document.getElementById('summary-timer');
+            if (tEl) tEl.textContent = '-';
         }
         
         // 전투 UI에 카드 표시
@@ -986,6 +1319,7 @@ class Game {
     private restoreConfirmButton(): void {
         const confirmBtn = document.getElementById('confirm-btn');
         if (confirmBtn) {
+            console.log('[DEBUG] restoreConfirmButton called - restoring confirm button to attack action');
             const newConfirmBtn = confirmBtn.cloneNode(true) as HTMLElement;
             confirmBtn.parentNode?.replaceChild(newConfirmBtn, confirmBtn);
             
@@ -1275,7 +1609,7 @@ class Game {
         this.isMultiplayer = false; // 로컬 모드
         uiManager.showScreen(Screen.GAME);
         uiManager.updateTurnNumber(1);
-        uiManager.updateCombatNames('-', '-');
+    uiManager.clearCombatNames();
         uiManager.addLogMessage('게임이 시작되었습니다!');
         
         // Combat UI 초기화
@@ -1345,7 +1679,7 @@ class Game {
         
         uiManager.showScreen(Screen.GAME);
         uiManager.updateTurnNumber(1);
-        uiManager.updateCombatNames('-', '-');
+    uiManager.clearCombatNames();
         uiManager.addLogMessage('멀티플레이어 게임이 시작되었습니다!');
         
         // Combat UI 초기화
@@ -1411,61 +1745,11 @@ class Game {
                     return;
                 }
 
-                // 선택 카드가 공격 또는 공격성 마법(대상 필요)을 포함하면 타겟 선택 UI를 띄운다
-                const requiresTarget = selectedCards.some((c: Card) => c.type === CardType.ATTACK || c.type === CardType.MAGIC);
+                // 선택 카드가 공격 또는 공격성 마법(대상 필요)을 포함하면 타겟 선택 UI를 띄울 수 있음 (확정 버튼에서 처리)
 
-                // 시도적으로 GameManager에 카드 선택을 알려줌 (유효성 검사)
-                const canSelect = this.gameManager.selectAttackCards(selectedCards);
-
-                if (!canSelect) {
-                    // 선택 불가하면 중앙 타겟 UI 제거
-                    this.hideInlineTargetSelection();
-                    return;
-                }
-
-                if (requiresTarget) {
-                    const session = this.gameManager.getSession();
-                    const localPlayer = this.gameManager.getLocalPlayer();
-                    const targets = session.players.filter(p => p.isAlive && p.id !== localPlayer.id);
-
-                    this.showInlineTargetSelection(targets, async (targetId: string) => {
-                        // 선택한 타겟으로 공격 실행
-                        const attackCards = selectedCards;
-                        const totalDamage = attackCards.reduce((sum, card) => sum + (card.healthDamage || 0) + (card.mentalDamage || 0), 0);
-
-                        // 멀티플레이어면 서버로 전송
-                        if (this.isMultiplayer) {
-                            socketClient.sendAttack(this.currentPlayerId, targetId, attackCards, totalDamage);
-                            // hide inline target UI after sending attack
-                            this.hideInlineTargetSelection();
-                        }
-
-                        // 멀티플레이어에서는 서버 응답을 기다리도록 변경
-                        if (this.isMultiplayer) {
-                            // 선택된 방어자 전역에 설정은 클라이언트 UI 용도로만 할 수 있음
-                            if (!this.isMultiplayer && this.gameManager) this.gameManager.selectDefender(targetId);
-                            // 손패 조작/행동 비활성화(서버 응답 대기)
-                            if (this.handManager) this.handManager.setEnabled(false);
-                            uiManager.addLogMessage('서버 응답을 기다리는 중...');
-                            // ensure inline UI removed
-                            this.hideInlineTargetSelection();
-                        } else {
-                            // 로컬 모드: 즉시 처리
-                            if (this.gameManager) {
-                                if (!this.isMultiplayer) this.gameManager.selectDefender(targetId);
-                                this.gameManager.resolveAttack();
-                            }
-                            // 손패 선택 초기화
-                            if (this.handManager) this.handManager.clearSelection();
-                            this.hideInlineTargetSelection();
-                            if (this.combatUI) this.combatUI.clearCombat();
-                            this.updateGameState();
-                        }
-                    });
-                } else {
-                    // 대상 불필요(예: 필드 마법)인 경우 바로 실행할 수 있음
-                    this.hideInlineTargetSelection();
-                }
+                // Do not open inline target selection on mere card selection.
+                // Target selection / attack confirmation happens when the player clicks the '확정' button.
+                this.hideInlineTargetSelection();
             }
         });
 

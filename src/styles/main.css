@@ -572,6 +572,28 @@ body {
     border-color: var(--field-magic);
 }
 
+/* 비활성(방어 불가) 카드 표시 */
+.card.not-eligible {
+    opacity: 0.35 !important;
+    filter: grayscale(80%);
+    transform: none !important; /* hover 이동 방지 */
+    cursor: not-allowed !important;
+}
+
+/* stronger disabled overlay for 명확한 비활성화 표시 */
+.card.not-eligible {
+    border-color: rgba(255,255,255,0.06) !important;
+    box-shadow: none !important;
+}
+.card.not-eligible::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.45);
+    border-radius: 8px;
+    pointer-events: none;
+}
+
 .card-stats {
     font-size: 10px;
     margin-bottom: 4px;
@@ -994,4 +1016,28 @@ body {
     .hand-cards {
         gap: 4px;
     }
+}
+
+/* combat summary styles */
+.combat-summary {
+    margin-top: 12px;
+    background: rgba(0,0,0,0.3);
+    padding: 10px 14px;
+    border-radius: 8px;
+    border: 1px solid rgba(255,255,255,0.04);
+    max-width: 600px;
+    margin-left: auto;
+    margin-right: auto;
+}
+.combat-summary .summary-line {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 6px;
+}
+.combat-summary .summary-label { color: #aaa; }
+.combat-summary .summary-value { font-weight: 700; }
+.combat-summary .summary-value.timer {
+    font-size: 20px;
+    color: var(--danger-color);
 }
