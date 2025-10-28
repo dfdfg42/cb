@@ -87,7 +87,8 @@ export class TurnManager {
     if (Math.random() < 0.5) {
       player.mentalPower = Math.min(player.maxMentalPower, player.mentalPower + 10);
     } else {
-      player.health = Math.min(player.maxHealth, player.health + 10);
+      // HP cap을 100으로 고정
+      player.health = Math.min(100, player.health + 10);
     }
   }
 

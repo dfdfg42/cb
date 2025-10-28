@@ -14,6 +14,9 @@ const io = new Server(httpServer, {
     }
 });
 
+// Safety: prevent infinite reflect/bounce chains
+const MAX_CHAIN_DEPTH = 6;
+
 // 게임 세션 타입
 interface Player {
     id: string;
@@ -242,7 +245,7 @@ io.on('connection', (socket: Socket) => {
     });
 
     // 공격 액션
-    socket.on('player-attack', (data: { roomId: string, attackerId: string, targetId: string, cards: any[], damage: number, requestId?: string }) => {
+    socket.on('player-attack', (data: { roomId: string, attackerId: string, targetId: string, cards: any[], damage: number, requestId?: string, force?: boolean }) => {
         const room = rooms.get(data.roomId);
         if (!room || !room.isPlaying) {
             socket.emit('error', { message: '게임 중이 아닌 방입니다.' });
@@ -259,7 +262,8 @@ io.on('connection', (socket: Socket) => {
         // Ensure it's attacker's turn according to server-side tracking
         const currentIndex = room.currentPlayerIndex ?? 0;
         const currentPlayer = room.players[currentIndex];
-        if (attacker.id !== currentPlayer.id) {
+        // Test override: allow force=true to bypass turn check (used by integration test harness)
+        if (attacker.id !== currentPlayer.id && !data.force) {
             socket.emit('error', { message: '현재 차례가 아닙니다.' });
             return;
         }
@@ -278,15 +282,47 @@ io.on('connection', (socket: Socket) => {
             return;
         }
 
-        // Compute authoritative damage on server
-        let damage = typeof data.damage === 'number' ? data.damage : 0;
-        if (Array.isArray(data.cards)) {
+    // Compute authoritative damage / heal on server
+        // Prefer card-based values (healthDamage / phys_atk / damage). If the client supplied
+        // an explicit `damage` field while also including card entries, ignore the client-sent
+        // damage to avoid double-counting (clients may calculate locally). Server is authoritative.
+        let damageFromCards = 0;
+        let healFromCards = 0;
+        if (Array.isArray(data.cards) && data.cards.length > 0) {
             for (const c of data.cards) {
-                if (c && (typeof c.healthDamage === 'number' || typeof c.damage === 'number')) {
-                    damage += (typeof c.healthDamage === 'number' ? c.healthDamage : (c.damage || 0));
+                if (!c) continue;
+                // If card declares heal via effect, try to extract amount
+                if (c.effect && String(c.effect).toLowerCase() === 'heal') {
+                    // prefer healthDamage field
+                    if (typeof c.healthDamage === 'number' && c.healthDamage > 0) {
+                        healFromCards += c.healthDamage;
+                    } else if (typeof c.damage === 'number' && c.damage > 0) {
+                        // fallback to damage field
+                        healFromCards += c.damage;
+                    } else if (c.description && typeof c.description === 'string') {
+                        const m = c.description.match(/(\d+)/);
+                        if (m) healFromCards += parseInt(m[1], 10);
+                    }
+                    // do not add to damage
+                } else {
+                    if (typeof c.healthDamage === 'number') damageFromCards += c.healthDamage;
+                    else if (typeof c.damage === 'number') damageFromCards += c.damage;
+                    else if (typeof c.phys_atk === 'number') damageFromCards += c.phys_atk; // fallback for alternate card formats
                 }
             }
         }
+
+        let damage = 0;
+        if (Array.isArray(data.cards) && data.cards.length > 0) {
+            damage = damageFromCards;
+            if (typeof data.damage === 'number') {
+                console.warn(`Server: Ignoring client-sent damage=${data.damage} because cards were provided. Using damageFromCards=${damageFromCards}`);
+            }
+        } else {
+            damage = typeof data.damage === 'number' ? data.damage : 0;
+        }
+
+        console.log(`Server: computed damage (fromClient=${data.damage ?? 'null'}, fromCards=${damageFromCards}) => final=${damage}`);
 
         // determine attack attribute if provided on cards
         let attackAttribute: string | null = null;
@@ -325,6 +361,7 @@ io.on('connection', (socket: Socket) => {
             targetId: data.targetId,
             targetName: targetPlayer.name,
             damage,
+            heal: healFromCards || 0,
             cardsUsed: pendingCards,
             // store card ids separately for clients to reliably remove used cards
             cardsUsedIds: pendingCards.map((c: any) => c && c.id).filter(Boolean),
@@ -426,6 +463,12 @@ io.on('connection', (socket: Socket) => {
         const prevHealth = targetState ? targetState.health : 0;
         const finalDamage = Math.max(0, pending.damage - appliedDefense);
 
+        // Apply any heals first (heals are not blocked by defense)
+        if (pending.heal && pending.heal > 0 && targetState) {
+            targetState.health = Math.min(100, (targetState.health || 0) + pending.heal);
+            // record that heal happened (we'll include appliedDebuffs below)
+        }
+
         if (targetState) {
             targetState.health = Math.max(0, (targetState.health || 0) - finalDamage);
             if (targetState.health <= 0) targetState.alive = false;
@@ -451,34 +494,175 @@ io.on('connection', (socket: Socket) => {
         }
 
         // handle special defense effects (reflect / bounce)
-        let reflectDamage = 0;
-        let bounceTargetId: string | null = null;
-    // attackerState used for reflect resolution
-    const attackerState = room.playerStates && room.playerStates[pending.attackerId];
+        // Instead of applying reflect/bounce immediately, create new pending attacks so
+        // the new targets have a chance to defend (chainable). This preserves the
+        // semantic: defender's reflect causes the attack to be directed back to the
+        // original attacker (who may defend/reflect/bounce), and bounce redirects the
+        // attack to a random alive player (who may defend).
+        const specialEffectsToProcess: Array<{ type: 'reflect' | 'bounce'; card: any }> = [];
         for (const dc of defenderCards) {
             if (!dc || !dc.effect) continue;
-            if (dc.effect === 'reflect') {
-                reflectDamage = finalDamage;
-            } else if (dc.effect === 'bounce') {
-                // pick another random alive player (excluding defender)
-                const alive = room.players.filter(p => p.id !== data.defenderId && room.playerStates && room.playerStates[p.id] && room.playerStates[p.id].alive);
-                if (alive.length > 0) {
-                    const rnd = alive[Math.floor(Math.random() * alive.length)];
-                    bounceTargetId = rnd.id;
-                    const btState = room.playerStates && room.playerStates[bounceTargetId];
-                    if (btState) {
-                        btState.health = Math.max(0, btState.health - finalDamage);
-                        if (btState.health <= 0) btState.alive = false;
+            if (dc.effect === 'reflect' || dc.effect === 'bounce') {
+                specialEffectsToProcess.push({ type: dc.effect as any, card: dc });
+            }
+        }
+
+        if (specialEffectsToProcess.length > 0) {
+            // We'll process the first special effect found. If multiple special effects
+            // are used, the server behavior here prioritizes the first one in the list.
+            const eff = specialEffectsToProcess[0];
+
+            if (eff.type === 'reflect') {
+                // Create a new pending attack where the defender becomes the attacker
+                // and the original attacker becomes the target. Use the same finalDamage
+                // value as the reflected damage. Include a chainDepth to avoid infinite loops.
+                const newPendingId = `srv_refl_${Date.now()}_${Math.random().toString(36).substr(2,6)}`;
+                const chainDepth = (pending.chainDepth || 0) + 1;
+                // If chain depth exceeded, apply damage immediately instead of creating new pending
+                if (chainDepth > MAX_CHAIN_DEPTH) {
+                    // finalize original pending as resolved with no further chaining
+                    // cleanup original pending and continue to advance turn below
+                } else {
+                    const newPending = {
+                    requestId: newPendingId,
+                    attackerId: pending.targetId, // original defender now attacks
+                    attackerName: room.players.find(p => p.id === pending.targetId)?.name || 'unknown',
+                    targetId: pending.attackerId, // original attacker becomes target
+                    targetName: room.players.find(p => p.id === pending.attackerId)?.name || 'unknown',
+                    damage: finalDamage,
+                    cardsUsed: [],
+                    cardsUsedIds: [],
+                    attackAttribute: null,
+                    timestamp: Date.now(),
+                        chainDepth,
+                        roomId: data.roomId
+                    } as any;
+
+                    room.pendingAttacks = room.pendingAttacks || {};
+                    room.pendingAttacks[newPendingId] = newPending;
+
+                    // remove original pending - it is effectively redirected
+                    if (room.pendingAttacks && room.pendingAttacks[pending.requestId]) delete room.pendingAttacks[pending.requestId];
+
+                    // Broadcast announcement and defend-request for the new pending attack
+                    io.to(data.roomId).emit('attack-announced', {
+                        requestId: newPendingId,
+                        attackerId: newPending.attackerId,
+                        attackerName: newPending.attackerName,
+                        targetId: newPending.targetId,
+                        damage: newPending.damage,
+                        attackAttribute: null,
+                        cardsUsed: [],
+                        cardsUsedIds: [],
+                        chainSource: eff.type
+                    });
+
+                    const DEFEND_TIMEOUT_MS = 20000;
+                    const expiresAt = Date.now() + DEFEND_TIMEOUT_MS;
+                    io.to(data.roomId).emit('defend-request', {
+                        requestId: newPendingId,
+                        attackerId: newPending.attackerId,
+                        attackerName: newPending.attackerName,
+                        defenderId: newPending.targetId,
+                        defenderName: newPending.targetName,
+                        damage: newPending.damage,
+                        attackAttribute: null,
+                        roomId: data.roomId,
+                        expiresAt,
+                        chainSource: eff.type
+                    });
+
+                    // set timeout to auto-resolve if new defender doesn't respond
+                    const timeoutId = setTimeout(() => {
+                        if (room.pendingAttacks && room.pendingAttacks[newPendingId]) {
+                            resolvePendingAttack(room, newPendingId, null);
+                        }
+                    }, DEFEND_TIMEOUT_MS);
+                    room.pendingAttacks[newPendingId].timeoutId = timeoutId;
+
+                    // do not advance turn here; wait for the reflection chain to resolve
+                    return;
+                }
+            }
+
+            if (eff.type === 'bounce') {
+                // pick another random alive player (could include defender as per requirement)
+                const alive = room.players.filter(p => room.playerStates && room.playerStates[p.id] && room.playerStates[p.id].alive);
+                // if no alive players except attacker/defender, fallback to applying damage
+                const candidates = alive.filter(p => p.id !== pending.attackerId);
+                const chosenPool = candidates.length > 0 ? candidates : alive;
+                if (chosenPool.length === 0) {
+                    // nobody to bounce to, proceed with normal damage application below
+                } else {
+                    const rnd = chosenPool[Math.floor(Math.random() * chosenPool.length)];
+                    const bounceTargetId = rnd.id;
+
+                    const chainDepth = (pending.chainDepth || 0) + 1;
+                    if (chainDepth > MAX_CHAIN_DEPTH) {
+                        // fallback: apply damage immediately (below)
+                    } else {
+                        const newPendingId = `srv_bounce_${Date.now()}_${Math.random().toString(36).substr(2,6)}`;
+                        const newPending = {
+                            requestId: newPendingId,
+                            attackerId: pending.attackerId, // original attacker remains attacker
+                            attackerName: pending.attackerName,
+                            targetId: bounceTargetId,
+                            targetName: room.players.find(p => p.id === bounceTargetId)?.name || 'unknown',
+                            damage: finalDamage,
+                            cardsUsed: [],
+                            cardsUsedIds: [],
+                            attackAttribute: null,
+                            timestamp: Date.now(),
+                            chainDepth,
+                            roomId: data.roomId
+                        } as any;
+
+                        room.pendingAttacks = room.pendingAttacks || {};
+                        room.pendingAttacks[newPendingId] = newPending;
+
+                        // remove original pending - it is effectively redirected
+                        if (room.pendingAttacks && room.pendingAttacks[pending.requestId]) delete room.pendingAttacks[pending.requestId];
+
+                        io.to(data.roomId).emit('attack-announced', {
+                            requestId: newPendingId,
+                            attackerId: newPending.attackerId,
+                            attackerName: newPending.attackerName,
+                            targetId: newPending.targetId,
+                            damage: newPending.damage,
+                            attackAttribute: null,
+                            cardsUsed: [],
+                            cardsUsedIds: [],
+                            chainSource: eff.type
+                        });
+
+                        const DEFEND_TIMEOUT_MS = 20000;
+                        const expiresAt = Date.now() + DEFEND_TIMEOUT_MS;
+                        io.to(data.roomId).emit('defend-request', {
+                            requestId: newPendingId,
+                            attackerId: newPending.attackerId,
+                            attackerName: newPending.attackerName,
+                            defenderId: newPending.targetId,
+                            defenderName: newPending.targetName,
+                            damage: newPending.damage,
+                            attackAttribute: null,
+                            roomId: data.roomId,
+                            expiresAt,
+                            chainSource: eff.type
+                        });
+
+                        const timeoutId = setTimeout(() => {
+                            if (room.pendingAttacks && room.pendingAttacks[newPendingId]) {
+                                resolvePendingAttack(room, newPendingId, null);
+                            }
+                        }, DEFEND_TIMEOUT_MS);
+                        room.pendingAttacks[newPendingId].timeoutId = timeoutId;
+
+                        // do not advance turn here; wait for the bounced attack to resolve
+                        return;
                     }
                 }
             }
         }
-
-            // apply reflect if any
-            if (reflectDamage > 0 && attackerState) {
-                attackerState.health = Math.max(0, attackerState.health - reflectDamage);
-                if (attackerState.health <= 0) attackerState.alive = false;
-            }
 
         // Advance turn (simple round-robin)
         const currentIndex = room.currentPlayerIndex ?? 0;
@@ -494,6 +678,7 @@ io.on('connection', (socket: Socket) => {
             targetId: pending.targetId,
             targetName: pending.targetName,
             damageApplied: finalDamage,
+            healApplied: pending.heal || 0,
             targetPrevHealth: prevHealth,
             targetHealth: targetState ? targetState.health : 0,
             eliminated: targetState ? !targetState.alive : false,
@@ -502,8 +687,6 @@ io.on('connection', (socket: Socket) => {
             defenseCards: defenderCards,
             defenseCardIds: defenderCardIds,
             defenseApplied: appliedDefense,
-            reflectDamage,
-            bounceTargetId,
             appliedDebuffs,
             nextPlayerId,
             currentTurn: room.currentTurn,
@@ -530,16 +713,21 @@ io.on('connection', (socket: Socket) => {
         const pending = room.pendingAttacks && room.pendingAttacks[pendingId];
         if (!pending) return;
 
-        // apply damage to target
+        // apply heal first (heals are not blocked by defense), then damage
         const targetState = room.playerStates && room.playerStates[pending.targetId];
         const prevHealth = targetState ? targetState.health : 0;
-        const finalDamage = pending.damage; // no defense
+        const finalDamage = pending.damage || 0; // no defense
+
+        if (pending.heal && pending.heal > 0 && targetState) {
+            targetState.health = Math.min(100, (targetState.health || 0) + pending.heal);
+        }
+
         if (targetState) {
             targetState.health = Math.max(0, (targetState.health || 0) - finalDamage);
             if (targetState.health <= 0) targetState.alive = false;
         }
 
-    // apply card effects (debuffs) from attacker's cards when no defense used
+        // apply card effects (debuffs) from attacker's cards when no defense used
         const appliedDebuffs: string[] = [];
         try {
             const atkCards = pending.cardsUsed || [];
@@ -569,6 +757,7 @@ io.on('connection', (socket: Socket) => {
             targetId: pending.targetId,
             targetName: pending.targetName,
             damageApplied: finalDamage,
+            healApplied: pending.heal || 0,
             targetPrevHealth: prevHealth,
             targetHealth: targetState ? targetState.health : 0,
             eliminated: targetState ? !targetState.alive : false,
@@ -644,6 +833,17 @@ io.on('connection', (socket: Socket) => {
 
         console.log(`✨ 특수 이벤트: ${data.eventType}`);
         io.to(data.roomId).emit('special-event', data);
+    });
+
+    // TEST-HOOK: forcefully set a player's authoritative health (for integration tests)
+    socket.on('force-set-health', (data: { roomId: string, playerId: string, health: number }) => {
+        const room = rooms.get(data.roomId);
+        if (!room || !room.isPlaying) return;
+        room.playerStates = room.playerStates || {};
+        room.playerStates[data.playerId] = room.playerStates[data.playerId] || { health: 100, mentalPower: 0, alive: true };
+        room.playerStates[data.playerId].health = Math.max(0, Math.min(100, data.health));
+        console.log(`TEST-HOOK: set health for ${data.playerId} = ${room.playerStates[data.playerId].health}`);
+        io.to(data.roomId).emit('player-state-update', { roomId: data.roomId, playerId: data.playerId, health: room.playerStates[data.playerId].health });
     });
 
     // 플레이어 상태 업데이트

@@ -153,6 +153,13 @@ export class SocketClient {
 
         const requestId = this.generateRequestId();
 
+        // Debug log to help trace client-sent attack payloads (useful when investigating damage mismatch)
+        try {
+            console.debug && console.debug('SocketClient.sendAttack ->', { requestId, roomId: this.currentRoomId, attackerId, targetId, cards, damage });
+        } catch (e) {
+            // ignore logging errors in environments without console.debug
+        }
+
         this.socket.emit('player-attack', {
             requestId,
             roomId: this.currentRoomId,

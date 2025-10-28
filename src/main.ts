@@ -425,7 +425,11 @@ class Game {
                     const usedCards = resolved.cardsUsed || [];
                     const damageApplied = resolved.damageApplied || 0;
                     const appliedDebuffs = resolved.appliedDebuffs || [];
-                    this.combatUI.showSummary(attackerName, defenderName, usedCards, damageApplied, appliedDebuffs);
+                    if (this.combatUI && typeof this.combatUI.showFinalSummary === 'function') {
+                        this.combatUI.showFinalSummary(resolved);
+                    } else {
+                        this.combatUI.showSummary(attackerName, defenderName, usedCards, damageApplied, appliedDebuffs);
+                    }
                     setTimeout(() => this.combatUI!.clearCombat(), 1200);
                 } catch (e) {
                     setTimeout(() => this.combatUI!.clearCombat(), 1200);
@@ -459,13 +463,14 @@ class Game {
                 // reset any previous defender cards
                 this.combatUI.showDefenseCards([]);
                 // also show the combat summary in the center (attacker -> defender, cards, damage)
-                try {
-                    const attackerName = data.attackerName || (this.gameManager && this.gameManager.getPlayerById(data.attackerId)?.name) || '-';
-                    const defenderName = data.targetName || (this.gameManager && this.gameManager.getPlayerById(data.targetId)?.name) || '-';
-                    this.combatUI.showSummary(attackerName, defenderName, data.cardsUsed || [], data.damage || 0, []);
-                } catch (e) {
-                    // ignore
-                }
+                    try {
+                        const attackerName = data.attackerName || (this.gameManager && this.gameManager.getPlayerById(data.attackerId)?.name) || '-';
+                        const defenderName = data.targetName || (this.gameManager && this.gameManager.getPlayerById(data.targetId)?.name) || '-';
+                        const chain = (data && (data.chainSource || data.chain)) ? (data.chainSource || data.chain) : undefined;
+                        this.combatUI.showSummary(attackerName, defenderName, data.cardsUsed || [], data.damage || 0, [], chain);
+                    } catch (e) {
+                        // ignore
+                    }
             }
 
             // hide inline action buttons until defend-request arrives
@@ -942,25 +947,9 @@ class Game {
             if (!hasMagic) {
                 this.showTargetSelection();
             } else {
-                    // 마법 카드는 즉시 사용 (멀티플레이어일 경우 서버 응답을 기다려야 함)
-                    if (this.isMultiplayer) {
-                        // send to server as attack
-                        const attackCards = selectedCards;
-                        const totalDamage = attackCards.reduce((sum, card) => sum + (card.healthDamage || 0) + (card.mentalDamage || 0), 0);
-                        socketClient.sendAttack(this.currentPlayerId, this.currentPlayerId, attackCards, totalDamage);
-                        // disable hand while waiting
-                        if (this.handManager) this.handManager.setEnabled(false);
-                        uiManager.addLogMessage('서버 응답을 기다리는 중...');
-                    } else {
-                        // 로컬 모드: 즉시 처리
-                        this.gameManager.resolveAttack();
-                        this.updateGameState();
-
-                        // 손패 업데이트
-                        const localPlayer = this.gameManager.getLocalPlayer();
-                        this.handManager.clearHand();
-                        this.handManager.addCards(localPlayer.cards);
-                    }
+                // 마법 카드(또는 정신 공격/회복 카드 포함)는 대상 선택을 통해 발동하도록 변경합니다.
+                // (필드 마법은 이미 위에서 처리되므로 여기서는 대상 선택만 처리)
+                this.showTargetSelection();
             }
         } else {
             uiManager.showAlert('카드를 사용할 수 없습니다!');
@@ -1047,6 +1036,20 @@ class Game {
             }
             
                         if (!this.isMultiplayer) this.gameManager.selectDefender(randomTarget.id);
+
+                        // Optimistic UI: immediately show attack and summary for local mode
+                        try {
+                            if (this.combatUI) {
+                                const attackCards = this.gameManager.getSession().attackCards;
+                                const totalDamage = attackCards.reduce((sum:any, card:any) => sum + (card.healthDamage || 0) + (card.mentalDamage || 0), 0);
+                                const attacker = this.gameManager.getCurrentPlayer();
+                                const defender = this.gameManager.getPlayerById(randomTarget.id);
+                                this.combatUI.showAttackCards(attackCards || []);
+                                this.combatUI.showSummary(attacker?.name || '-', defender?.name || '-', attackCards || [], totalDamage, []);
+                            }
+                        } catch (e) {
+                            // ignore UI errors
+                        }
             
             // 멀티플레이어: 공격 전송
             if (this.isMultiplayer) {
@@ -1106,6 +1109,20 @@ class Game {
                 soundManager.playClick();
                 uiManager.hideModal('target-selection-modal');
                     if (!this.isMultiplayer) this.gameManager!.selectDefender(player.id);
+
+                    // Optimistic UI: immediately show attack and summary for local mode
+                    try {
+                        if (!this.isMultiplayer && this.combatUI && this.gameManager) {
+                            const attackCards = this.gameManager.getSession().attackCards;
+                            const totalDamage = attackCards.reduce((sum:any, card:any) => sum + (card.healthDamage || 0) + (card.mentalDamage || 0), 0);
+                            const attacker = this.gameManager.getCurrentPlayer();
+                            const defender = this.gameManager.getPlayerById(player.id);
+                            this.combatUI.showAttackCards(attackCards || []);
+                            this.combatUI.showSummary(attacker?.name || '-', defender?.name || '-', attackCards || [], totalDamage, []);
+                        }
+                    } catch (e) {
+                        // ignore UI errors
+                    }
                 
                 // 멀티플레이어: 공격 전송
                 if (this.isMultiplayer) {
@@ -1720,8 +1737,9 @@ class Game {
         const session = this.gameManager.getSession();
         if (session) {
             this.playersManager.setPlayers(session.players);
+            // 세션의 현재 턴 플레이어를 우선으로 사용합니다 (서버/게임 로직 권위)
+            this.playersManager.setActivePlayer(session.currentPlayerId);
         }
-        this.playersManager.setActivePlayer(this.currentPlayerId);
 
         // 손패 매니저 초기화
         this.handManager = new HandManager('hand-cards');
@@ -1818,13 +1836,11 @@ const game = new Game();
 
 // 개발 모드: 콘솔에서 게임 시작 가능
 (window as any).game = game;
-(window as any).startGame = () => game.startGame();
 (window as any).drawCard = () => game.drawCard();
 (window as any).discardSelected = () => game.discardSelected();
 (window as any).takeDamage = (playerIndex: number, damage: number) => game.takeDamage(playerIndex, damage);
 
 console.log('💡 개발 모드 명령어:');
-console.log('  - startGame() : 실제 게임 시작 (AI와 대전)');
 console.log('  - drawCard() : 카드 1장 뽑기 (테스트용)');
 console.log('  - discardSelected() : 선택한 카드 버리기 (테스트용)');
 console.log('  - takeDamage(playerIndex, damage) : 플레이어에게 데미지 (테스트용)');

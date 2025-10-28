@@ -208,13 +208,21 @@ export class GameManager {
             return;
         }
 
-        // 공격 데미지 계산
-        let totalHealthDamage = this.session.attackCards.reduce(
-            (sum, card) => sum + card.healthDamage, 0
-        );
-        let totalMentalDamage = this.session.attackCards.reduce(
-            (sum, card) => sum + card.mentalDamage, 0
-        );
+        // 공격/회복 처리: 카드별로 처리한다. 회복(HEAL)은 대상의 체력을 회복시키고
+        // 그 외(공격)는 체력/정신 데미지를 누적하여 적용한다.
+        let totalHealthDamage = 0;
+        let totalMentalDamage = 0;
+
+        const extractHealAmount = (card: Card): number => {
+            // 우선적으로 healthDamage 필드를 사용
+            if (card.healthDamage && card.healthDamage > 0) return card.healthDamage;
+            // 정신 피해 필드에 수치가 들어있을 수 있으나, 힐은 description에 숫자로 적혀있는 경우가 있음
+            if (card.description) {
+                const m = card.description.match(/(\d+)/);
+                if (m) return parseInt(m[1], 10);
+            }
+            return 0;
+        };
 
         // 필드 마법: 화염의 대지 (발동자 공격력 +5)
         if (this.session.fieldMagic?.name === '화염의 대지' && 
@@ -227,6 +235,23 @@ export class GameManager {
             this.session.fieldMagic.casterId !== attacker.id) {
             totalHealthDamage = Math.max(0, totalHealthDamage - 3);
         }
+
+        // 각 카드 적용: HEAL은 즉시 회복을 적용, 그 외는 누적 데미지로 처리
+        this.session.attackCards.forEach(card => {
+            if (card.effect === CardEffect.HEAL) {
+                const healAmt = extractHealAmount(card);
+                if (healAmt > 0) {
+                    // Heal applies to the designated defender
+                    if (defender && defender.isAlive) {
+                        defender.health = Math.min(100, defender.health + healAmt);
+                        uiManager.addLogMessage(`✨ ${defender.name}이(가) ${healAmt}의 체력을 회복했습니다!`);
+                    }
+                }
+            } else {
+                totalHealthDamage += card.healthDamage || 0;
+                totalMentalDamage += card.mentalDamage || 0;
+            }
+        });
 
         // 정신력 소모
         const mentalCost = this.session.attackCards.reduce(
@@ -404,8 +429,8 @@ export class GameManager {
                 }
             });
         } else if (fieldMagic.name === '치유의 성역' && caster && caster.isAlive) {
-            // 발동자는 매 턴 체력 10 회복
-            caster.health = Math.min(caster.maxHealth, caster.health + 10);
+            // 발동자는 매 턴 체력 10 회복 (절대 최대 HP는 100으로 고정)
+            caster.health = Math.min(100, caster.health + 10);
             uiManager.addLogMessage(`✨ ${caster.name}이(가) 치유의 성역에서 체력 10을 회복했습니다!`);
         } else if (fieldMagic.name === '얼음 왕국' && caster && caster.isAlive) {
             // 공격력 감소는 resolveAttack에서 처리
@@ -471,7 +496,8 @@ export class GameManager {
         const target = alivePlayers[Math.floor(Math.random() * alivePlayers.length)];
         
         if (Math.random() < 0.5) {
-            target.health = Math.min(target.maxHealth, target.health + 10);
+            // HP cap을 100으로 고정
+            target.health = Math.min(100, target.health + 10);
             uiManager.addLogMessage(`😇 천사가 나타나 ${target.name}의 체력을 10 회복!`);
         } else {
             target.mentalPower = Math.min(target.maxMentalPower, target.mentalPower + 10);
