@@ -401,8 +401,9 @@ io.on('connection', (socket: Socket) => {
         if (Array.isArray(data.cards) && data.cards.length > 0) {
             for (const c of data.cards) {
                 if (!c) continue;
-                // accumulate card costs
+                // accumulate card costs (check both cost and mentalCost fields)
                 if (typeof c.cost === 'number') totalCost += c.cost;
+                if (typeof c.mentalCost === 'number') totalCost += c.mentalCost;
                 
                 // If card declares heal via effect, try to extract amount
                 if (c.effect && String(c.effect).toLowerCase() === 'heal') {
@@ -605,6 +606,9 @@ io.on('connection', (socket: Socket) => {
             if (c && typeof c.cost === 'number') {
                 totalDefenseCost += c.cost;
             }
+            if (c && typeof c.mentalCost === 'number') {
+                totalDefenseCost += c.mentalCost;
+            }
         }
         
         if (totalDefenseCost > 0 && room.playerStates) {
@@ -667,47 +671,12 @@ io.on('connection', (socket: Socket) => {
         const targetState = room.playerStates && room.playerStates[attackItem.targetId];
         const prevHealth = targetState ? targetState.health : 0;
         const prevMentalPower = targetState ? targetState.mentalPower : 0;
+        
+        // Defense cards can only block health damage, NOT mental damage
         const finalDamage = Math.max(0, attackItem.damage - appliedDefense);
-        const finalMentalDamage = attackItem.mentalDamage || 0;
+        const finalMentalDamage = attackItem.mentalDamage || 0;  // Mental damage is NEVER reduced by defense
 
-        // Apply any heals first (heals are not blocked by defense)
-        if (attackItem.heal && attackItem.heal > 0 && targetState) {
-            targetState.health = Math.min(100, (targetState.health || 0) + attackItem.heal);
-        }
-
-        if (targetState) {
-            // Apply health damage
-            targetState.health = Math.max(0, (targetState.health || 0) - finalDamage);
-            
-            // Apply mental damage (reduces mentalPower)
-            if (finalMentalDamage > 0) {
-                targetState.mentalPower = Math.max(0, (targetState.mentalPower || 0) - finalMentalDamage);
-                console.log(`[Mental Attack] ${attackItem.targetName} lost ${finalMentalDamage} mana (remaining: ${targetState.mentalPower})`);
-            }
-            
-            if (targetState.health <= 0) targetState.alive = false;
-        }
-
-        // apply card effects (debuffs) from attacker's cards
-        const appliedDebuffs: string[] = [];
-        try {
-            const atkCards = attackItem.cardsUsed || [];
-            for (const ac of atkCards) {
-                if (ac && ac.effect && ac.effect !== 'reflect' && ac.effect !== 'bounce') {
-                    if (targetState) {
-                        targetState.debuffs = targetState.debuffs || [];
-                        if (!targetState.debuffs.includes(ac.effect)) {
-                            targetState.debuffs.push(ac.effect);
-                            appliedDebuffs.push(ac.effect);
-                        }
-                    }
-                }
-            }
-        } catch (e) {
-            // ignore malformed card effects
-        }
-
-        // handle special defense effects (reflect / bounce) - ADD TO QUEUE
+        // Check for special defense effects FIRST (reflect / bounce) - BEFORE applying damage
         const specialEffectsToProcess: Array<{ type: 'reflect' | 'bounce'; card: any }> = [];
         for (const dc of defenderCardArray) {
             if (!dc || !dc.effect) continue;
@@ -717,6 +686,7 @@ io.on('connection', (socket: Socket) => {
             }
         }
 
+        // If special effects exist, handle them WITHOUT applying damage to defender
         if (specialEffectsToProcess.length > 0) {
             const eff = specialEffectsToProcess[0];
             const chainDepth = attackItem.chainDepth + 1;
@@ -864,13 +834,12 @@ io.on('connection', (socket: Socket) => {
                     originalMentalDamage: attackItem.mentalDamage || 0
                 });
 
-                // Pick random alive player (exclude original attacker AND current defender to prevent self-bounce)
+                // Pick random alive player (NO exclusions - anyone can be bounced to, even the current defender)
                 const alive = room.players.filter(p => room.playerStates && room.playerStates[p.id] && room.playerStates[p.id].alive);
-                const candidates = alive.filter(p => p.id !== attackItem.attackerId && p.id !== attackItem.targetId);
                 
-                if (candidates.length === 0) {
-                    console.warn(`[resolveAttackFromQueue] No bounce targets available (no other players)`);
-                    // No other targets - just advance turn and end
+                if (alive.length === 0) {
+                    // No alive players at all - this shouldn't happen but handle gracefully
+                    console.warn(`[resolveAttackFromQueue] No bounce targets available (no alive players)`);
                     room.attackQueue.removeAttack(attackItem.id);
                     
                     const currentIndex = room.currentPlayerIndex ?? 0;
@@ -884,8 +853,12 @@ io.on('connection', (socket: Socket) => {
                     return;
                 }
 
-                const rnd = candidates[Math.floor(Math.random() * candidates.length)];
+                // Random selection from ALL alive players (including attacker and defender)
+                const rnd = alive[Math.floor(Math.random() * alive.length)];
                 const bounceTargetId = rnd.id;
+                console.log(`[resolveAttackFromQueue] Bouncing attack to ${rnd.name} (from ${alive.length} candidates, including current defender)`);
+
+
 
                 const newAttackId = `atk_bounce_${Date.now()}_${Math.random().toString(36).substr(2,6)}`;
                 const newRequestId = `srv_bounce_${Date.now()}_${Math.random().toString(36).substr(2,6)}`;
@@ -922,6 +895,46 @@ io.on('connection', (socket: Socket) => {
                 // Do NOT advance turn - wait for chain to resolve
                 return;
             }
+        }
+
+        // No special effects - apply damage normally
+        console.log(`[resolveAttackFromQueue] No special effects, applying damage normally`);
+        
+        // Apply any heals first (heals are not blocked by defense)
+        if (attackItem.heal && attackItem.heal > 0 && targetState) {
+            targetState.health = Math.min(100, (targetState.health || 0) + attackItem.heal);
+        }
+
+        if (targetState) {
+            // Apply health damage
+            targetState.health = Math.max(0, (targetState.health || 0) - finalDamage);
+            
+            // Apply mental damage (reduces mentalPower)
+            if (finalMentalDamage > 0) {
+                targetState.mentalPower = Math.max(0, (targetState.mentalPower || 0) - finalMentalDamage);
+                console.log(`[Mental Attack] ${attackItem.targetName} lost ${finalMentalDamage} mana (remaining: ${targetState.mentalPower})`);
+            }
+            
+            if (targetState.health <= 0) targetState.alive = false;
+        }
+
+        // apply card effects (debuffs) from attacker's cards
+        const appliedDebuffs: string[] = [];
+        try {
+            const atkCards = attackItem.cardsUsed || [];
+            for (const ac of atkCards) {
+                if (ac && ac.effect && ac.effect !== 'reflect' && ac.effect !== 'bounce') {
+                    if (targetState) {
+                        targetState.debuffs = targetState.debuffs || [];
+                        if (!targetState.debuffs.includes(ac.effect)) {
+                            targetState.debuffs.push(ac.effect);
+                            appliedDebuffs.push(ac.effect);
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            // ignore malformed card effects
         }
 
         // No special effects or chain limit reached - finalize attack
