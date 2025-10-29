@@ -94,21 +94,22 @@
   - [ ] 메서드 추가 (필요시)
 
 ### 2.3 Server.ts 리팩토링
-- [ ] 📝 기존 `server.ts` 백업 생성
-- [ ] 🚧 핸들러들을 새로운 클래스로 이동
-  - [ ] ConnectionHandler 통합
-  - [ ] RoomEventHandler 통합
-  - [ ] GameEventHandler 통합
-  - [ ] CombatEventHandler 통합
-- [ ] 🚧 비즈니스 로직을 서비스로 이동
-  - [ ] processNextAttack() → AttackResolver
-  - [ ] resolveAttackFromQueue() → AttackResolver
-- [ ] 🚧 중복 코드 제거
-  - [ ] playerStates 초기화 로직 통합
-  - [ ] 에러 처리 표준화
-- [ ] 🚧 Server.ts를 orchestrator로 재구성
-  - [ ] 각 핸들러 인스턴스 생성
-  - [ ] 라우팅만 담당
+- [x] ✅ 기존 `server.ts` 백업 생성
+- [x] ✅ 핸들러들을 새로운 클래스로 이동
+  - [x] ✅ ConnectionHandler 통합
+  - [x] ✅ RoomEventHandler 통합
+  - [x] ✅ GameEventHandler 통합
+  - [x] ✅ CombatEventHandler 통합
+- [x] ✅ 비즈니스 로직을 서비스로 이동
+  - [x] ✅ processNextAttack() → CombatEventHandler
+  - [x] ✅ resolveAttackFromQueue() → CombatEventHandler
+- [x] ✅ 중복 코드 제거
+  - [x] ✅ playerStates 초기화 로직 통합
+  - [x] ✅ 에러 처리 표준화
+- [x] ✅ Server.ts를 orchestrator로 재구성
+  - [x] ✅ 각 핸들러 인스턴스 생성
+  - [x] ✅ 라우팅만 담당
+  - [x] ✅ 830줄 → 127줄로 축소 (85% 감소!)
 
 ---
 
