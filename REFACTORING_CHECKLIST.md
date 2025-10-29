@@ -35,10 +35,10 @@
   - [x] ✅ RoomEvent
   - [x] ✅ GameActionEvent
   - [x] ✅ 모든 소켓 이벤트 타입 정의
-- [ ] 📝 공유 타입 검증 (`shared/validators/`)
-  - [ ] CardValidator
-  - [ ] AttackValidator
-  - [ ] DefenseValidator
+- [x] ✅ 공유 타입 검증 (`shared/validators/`)
+  - [x] ✅ CardValidator
+  - [x] ✅ CombatValidator (AttackValidator + DefenseValidator)
+  - [x] ✅ index.ts (통합 export)
 
 ---
 
