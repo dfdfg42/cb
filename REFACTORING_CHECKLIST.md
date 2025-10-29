@@ -45,26 +45,35 @@
 ## Phase 2: Server 리팩토링 (최우선)
 
 ### 2.1 Socket 핸들러 분리
-- [ ] 📝 `server/handlers/` 디렉토리 생성
-- [ ] 📝 `server/handlers/ConnectionHandler.ts`
-  - [ ] connection 이벤트
-  - [ ] disconnect 이벤트
-  - [ ] 재연결 로직
-- [ ] 📝 `server/handlers/RoomEventHandler.ts`
-  - [ ] create-room
-  - [ ] join-room
-  - [ ] leave-room
-  - [ ] toggle-ready
-- [ ] 📝 `server/handlers/GameEventHandler.ts`
-  - [ ] start-game
-  - [ ] game-action
-  - [ ] turn-start
-  - [ ] turn-end
-- [ ] 📝 `server/handlers/CombatEventHandler.ts`
-  - [ ] player-attack
-  - [ ] player-defend
-  - [ ] attack-resolved
-  - [ ] defend-request
+- [x] ✅ `server/handlers/` 디렉토리 생성
+- [x] ✅ `server/handlers/ConnectionHandler.ts`
+  - [x] ✅ connection 이벤트
+  - [x] ✅ disconnect 이벤트
+  - [x] ✅ 재연결 로직
+- [x] ✅ `server/handlers/RoomEventHandler.ts`
+  - [x] ✅ create-room
+  - [x] ✅ join-room
+  - [x] ✅ leave-room
+  - [x] ✅ toggle-ready
+  - [x] ✅ get-rooms
+- [x] ✅ `server/handlers/GameEventHandler.ts`
+  - [x] ✅ start-game
+  - [x] ✅ game-action
+  - [x] ✅ turn-start
+  - [x] ✅ turn-end
+  - [x] ✅ special-event
+  - [x] ✅ player-state-update
+  - [x] ✅ game-over
+  - [x] ✅ force-set-health (test only)
+- [x] ✅ `server/handlers/CombatEventHandler.ts`
+  - [x] ✅ player-attack
+  - [x] ✅ player-defend
+  - [x] ✅ attack-resolved
+  - [x] ✅ defend-request
+  - [x] ✅ special effects handling (reflect/bounce)
+  - [x] ✅ normal damage application
+  - [x] ✅ chain attack processing
+- [x] ✅ `server/handlers/index.ts` (통합 export)
 
 ### 2.2 비즈니스 로직 분리
 - [ ] 📝 `server/services/AttackResolver.ts` 생성
