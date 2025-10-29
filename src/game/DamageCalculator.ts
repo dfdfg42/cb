@@ -1,136 +1,70 @@
-import { Card, AttributeType } from '../types/gameTypes';
+import { Card } from '../types';
 
+/**
+ * Consolidated DamageCalculator
+ * - 단위 테스트 및 GameManager 통합용으로 핵심 계산 기능만 제공합니다.
+ */
 export class DamageCalculator {
-  // 방어 카드가 해당 공격 속성을 막을 수 있는지 판단하는 규칙
-  private static canDefenseBlock(attackAttr: AttributeType, defenseAttr: AttributeType): boolean {
-    // Normalize by comparing underlying string values; accept Korean/English inputs elsewhere
-    const a = String(attackAttr).toLowerCase();
-    const d = String(defenseAttr).toLowerCase();
-
-    if (a === 'fire' || a === '화염') return (d === 'water' || d === '물');
-    if (a === 'water' || a === '물') return (d === 'fire' || d === '화염');
-    if (a === 'light' || a === '빛') return (d === 'light' || d === '빛');
-    if (a === 'dark' || a === '암흑') return true;
-    return true;
+  public static getAttributeMultiplier(attackAttr?: string, defenseAttr?: string): number | typeof Infinity {
+    if (!attackAttr) return 1;
+    if (attackAttr === 'fire' && defenseAttr === 'water') return 0.5;
+    if (attackAttr === 'water' && defenseAttr === 'fire') return 2.0;
+    if (attackAttr === 'light') return 1.5;
+    if (attackAttr === 'dark' && (!defenseAttr || defenseAttr === 'none')) return Infinity;
+    return 1;
   }
 
-  // HP 데미지 계산
-  static calculateHealthDamage(
-    attackCards: Card[],
-    defenseCards: Card[],
-  ): {
-    damage: number;
-    isLethal: boolean;
-    effects: string[];
-  } {
-    let totalDamage = 0;
+  // HP 데미지 계산: 공격 카드 합산 - 방어 합산, 반사/튕김/즉사 플래그 포함
+  public static calculateHealthDamage(attackCards: Card[], defenseCards: Card[], defenderAttr?: string) {
+    let totalAttack = 0;
+    let totalDefense = 0;
+    let isReflect = false;
+    let isBounce = false;
+    let absorb = 0;
     let isLethal = false;
-    const effects: string[] = [];
 
-    // 공격 카드들의 데미지 합산
-    // 조직화: 공격을 속성별로 집계하고, 방어는 속성 규칙에 따라 소진하면서 차감
-    const attackByAttr: Record<string, number> = {};
-    attackCards.forEach(card => {
-      if ('attack' in card) {
-        const baseAttack = (card as any).attack || 0;
-        const attr = (card as any).attribute || AttributeType.NONE;
-        attackByAttr[attr] = (attackByAttr[attr] || 0) + baseAttack;
-
-        // 특수 효과(예: 즉사 등) — 현재 즉사/특수 효과는 별도 로직이 없으므로 effects에 표기
-        if ('specialEffects' in card) {
-          const specialEffects = (card as any).specialEffects || [];
-          specialEffects.forEach((effect: string) => {
-            if (effect.includes('즉사')) {
-              isLethal = true;
-              effects.push('즉사 효과 발동');
-            }
-            if (effect.includes('HP 흡수')) {
-              effects.push(`HP 흡수`);
-            }
-            if (effect.includes('반동')) {
-              effects.push(`반동 데미지`);
-            }
-          });
+    for (const ac of attackCards || []) {
+      const multiplier = this.getAttributeMultiplier((ac as any).attribute, defenderAttr) as number;
+      if (multiplier === Infinity) {
+        isLethal = true;
+        break;
+      }
+      const atk = (ac.healthDamage || 0) * multiplier;
+      totalAttack += atk;
+      if (Array.isArray((ac as any).specialEffects)) {
+        for (const s of (ac as any).specialEffects) {
+          if (typeof s === 'string' && s.includes('흡수')) absorb += Math.floor(atk * 0.5);
         }
       }
-    });
+    }
 
-    // 방어 카드 속성별 방어력 풀 생성
-    const defensePool: Record<string, number> = {};
-    defenseCards.forEach(card => {
-      if ('defense' in card) {
-        const defVal = (card as any).defense || 0;
-        const defAttr = (card as any).attribute || AttributeType.NONE;
-        defensePool[defAttr] = (defensePool[defAttr] || 0) + defVal;
+    for (const dc of defenseCards || []) {
+      if ((dc as any).effect === 'reflect') {
+        isReflect = true;
+        continue;
       }
-    });
-
-    // 공격 속성별로 방어를 소진하며 최종 데미지 계산 (큰 데미지 먼저 소진)
-    const attrs = Object.keys(attackByAttr).sort((a, b) => (attackByAttr[b] - attackByAttr[a]));
-    attrs.forEach(attrKey => {
-      const attackAttr = attrKey as AttributeType;
-      let remainingAttack = attackByAttr[attrKey];
-
-      // determine which defense attributes can block this attackAttr
-      const allowedDefAttrs: AttributeType[] = [];
-      // collect all possible defense pools depending on rules
-      Object.keys(defensePool).forEach(defAttrKey => {
-        const defAttr = defAttrKey as AttributeType;
-        if (this.canDefenseBlock(attackAttr, defAttr)) {
-          allowedDefAttrs.push(defAttr);
-        }
-      });
-
-      // consume defense from allowed pools until attack is absorbed or defenses exhausted
-      for (const defAttr of allowedDefAttrs) {
-        if (remainingAttack <= 0) break;
-        const available = defensePool[defAttr] || 0;
-        if (available <= 0) continue;
-        const used = Math.min(available, remainingAttack);
-        defensePool[defAttr] = available - used;
-        remainingAttack -= used;
+      if ((dc as any).effect === 'bounce') {
+        isBounce = true;
+        continue;
       }
+      totalDefense += (dc.defense || 0);
+    }
 
-      // any remaining attack becomes damage
-      totalDamage += Math.max(0, remainingAttack);
-    });
+    if (isLethal) return { damage: 0, isLethal: true, isReflect, isBounce, absorb };
 
-    return {
-      damage: totalDamage,
-      isLethal,
-      effects
-    };
+    const final = Math.max(0, Math.floor(totalAttack - totalDefense));
+    return { damage: final, isLethal: false, isReflect, isBounce, absorb };
   }
 
-  // MP 데미지 계산
-  static calculateMentalDamage(
-    attackCards: Card[],
-  ): {
-    damage: number;
-    effects: string[];
-  } {
-    let totalDamage = 0;
-    const effects: string[] = [];
-
-    attackCards.forEach(card => {
-      if ('mentalDamage' in card) {
-        totalDamage += (card as any).mentalDamage;
-      }
-    });
-
-    return {
-      damage: totalDamage,
-      effects
-    };
+  public static calculateMentalDamage(attackCards: Card[]) {
+    let total = 0;
+    for (const ac of attackCards || []) total += ac.mentalDamage || 0;
+    return Math.max(0, Math.floor(total));
   }
 
-  // MP 소모 계산
-  static calculateMPCost(cards: Card[]): number {
-    return cards.reduce((total, card) => {
-      if ('mpCost' in card) {
-        return total + (card as any).mpCost;
-      }
-      return total;
-    }, 0);
+  public static calculateMPCost(cards: Card[]) {
+    return (cards || []).reduce((s, c) => s + (c.mentalCost || 0), 0);
   }
 }
+
+export default DamageCalculator;

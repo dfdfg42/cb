@@ -9,9 +9,9 @@
     "watch": "webpack --mode development --watch",
     "type-check": "tsc --noEmit",
     "server": "nodemon --watch server --exec ts-node server/server.ts",
-    "server:build": "tsc -p server/tsconfig.json"
-    ,
-    "test:integration": "node server/integrationTest.js"
+    "server:build": "tsc -p server/tsconfig.json",
+    "test:integration": "node server/integrationTest.js",
+    "test:unit": "ts-node test/fieldmagic_test.ts"
   },
   "keywords": [
     "card-game",
