@@ -1,4 +1,4 @@
-import express from 'express';
+﻿import express from 'express';
 import { createServer } from 'http';
 import { Server, Socket } from 'socket.io';
 import cors from 'cors';
@@ -8,6 +8,7 @@ import { AttackQueue } from './models/AttackQueue';
 import { CombatService, MAX_CHAIN_DEPTH } from './services/CombatService';
 import { DamageCalculator } from './services/DamageCalculator';
 import { EffectProcessor } from './services/EffectProcessor';
+import { RoomManager } from './services/RoomManager';
 import {
     AttackQueueItem,
     Card,
@@ -34,52 +35,15 @@ const io = new Server(httpServer, {
 const combatService = new CombatService();
 const damageCalculator = new DamageCalculator();
 const effectProcessor = new EffectProcessor();
-
-// 방 목록
-const rooms = new Map<string, Room>();
-
-// 유틸리티 함수
-function generateRoomId(): string {
-    // Use crypto.randomUUID when available for stable unique ids
-    try {
-        // Node 14.17+ has crypto.randomUUID
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const crypto = require('crypto');
-        if (typeof crypto.randomUUID === 'function') {
-            return `room_${crypto.randomUUID()}`;
-        }
-    } catch (e) {
-        // ignore and fallback
-    }
-
-    // fallback to timestamp+random
-    return `room_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-}
+const roomManager = new RoomManager();
 
 io.on('connection', (socket: Socket) => {
-    console.log(`✅ 클라이언트 연결: ${socket.id}`);
+    console.log(`???�라?�언???�결: ${socket.id}`);
 
-    // 방 생성
+    // �??�성
     socket.on('create-room', (data: { playerName: string, gameType: 'normal' | 'ranked' }) => {
-        const roomId = generateRoomId();
-        const player: Player = {
-            id: `player_${Date.now()}`,
-            socketId: socket.id,
-            name: data.playerName,
-            isReady: false
-        };
-
-        const room: Room = {
-            id: roomId,
-            name: `${data.playerName}의 방`,
-            players: [player],
-            maxPlayers: 4,
-            gameType: data.gameType,
-            isPlaying: false,
-            hostId: player.id
-        };
-
-        rooms.set(roomId, room);
+        const { roomId, room } = roomManager.createRoom(data.playerName, socket.id, data.gameType);
+        
         socket.join(roomId);
 
         socket.emit('room-created', {
@@ -87,129 +51,85 @@ io.on('connection', (socket: Socket) => {
             room
         });
 
-        console.log(`🏠 방 생성: ${roomId} by ${data.playerName}`);
+        console.log(`?�� �??�성: ${roomId} by ${data.playerName}`);
     });
 
-    // 방 참가
+    // �?참�?
     socket.on('join-room', (data: { roomId: string, playerName: string }) => {
-        const room = rooms.get(data.roomId);
+        const result = roomManager.joinRoom(data.roomId, data.playerName, socket.id);
 
-        if (!room) {
-            socket.emit('error', { message: '방을 찾을 수 없습니다.' });
+        if (!result.success) {
+            socket.emit('error', { message: result.error });
             return;
         }
 
-        if (room.players.length >= room.maxPlayers) {
-            socket.emit('error', { message: '방이 가득 찼습니다.' });
-            return;
-        }
-
-        if (room.isPlaying) {
-            socket.emit('error', { message: '게임이 이미 시작되었습니다.' });
-            return;
-        }
-
-        const player: Player = {
-            id: `player_${Date.now()}`,
-            socketId: socket.id,
-            name: data.playerName,
-            isReady: false
-        };
-
-        room.players.push(player);
         socket.join(data.roomId);
 
-        // 방의 모든 플레이어에게 업데이트
-        io.to(data.roomId).emit('room-updated', { room });
+        // 방의 모든 ?�레?�어?�게 ?�데?�트
+        io.to(data.roomId).emit('room-updated', { room: result.room });
 
         socket.emit('room-joined', {
             roomId: data.roomId,
-            room
+            room: result.room
         });
 
-        console.log(`👤 ${data.playerName} 참가: ${data.roomId}`);
+        console.log(`?�� ${data.playerName} 참�?: ${data.roomId}`);
     });
 
-    // 방 나가기
+    // �??��?�?
     socket.on('leave-room', (data: { roomId: string }) => {
-        const room = rooms.get(data.roomId);
+        const room = roomManager.getRoom(data.roomId);
         if (!room) return;
 
-        const playerIndex = room.players.findIndex(p => p.socketId === socket.id);
-        if (playerIndex === -1) return;
-
-        const player = room.players[playerIndex];
-        room.players.splice(playerIndex, 1);
-
-        // Remove authoritative player state if present
-        if (room.playerStates && player && player.id) {
-            delete room.playerStates[player.id];
-        }
-
-        socket.leave(data.roomId);
-
-        // 방이 비었으면 삭제
-        if (room.players.length === 0) {
-            rooms.delete(data.roomId);
-            console.log(`🗑️ 방 삭제: ${data.roomId}`);
-        } else {
-            // 호스트가 나갔으면 다음 플레이어가 호스트
-            if (room.hostId === player.id) {
-                room.hostId = room.players[0].id;
-            }
-            io.to(data.roomId).emit('room-updated', { room });
-        }
-
-        console.log(`👋 ${player.name} 퇴장: ${data.roomId}`);
-    });
-
-    // 준비 상태 토글
-    socket.on('toggle-ready', (data: { roomId: string }) => {
-        const room = rooms.get(data.roomId);
-        if (!room) return;
-
-        const player = room.players.find(p => p.socketId === socket.id);
+        const player = room.players.find((p: Player) => p.socketId === socket.id);
         if (!player) return;
 
-        player.isReady = !player.isReady;
+        const result = roomManager.removePlayer(socket.id);
+        socket.leave(data.roomId);
+
+        if (result.isEmpty) {
+            console.log(`?���?�???��: ${data.roomId}`);
+        } else if (result.room) {
+            io.to(data.roomId).emit('room-updated', { room: result.room });
+        }
+
+        console.log(`?�� ${player.name} ?�장: ${data.roomId}`);
+    });
+
+    // 준�??�태 ?��?
+    socket.on('toggle-ready', (data: { roomId: string }) => {
+        const room = roomManager.getRoom(data.roomId);
+        if (!room) return;
+
+        const player = room.players.find((p: Player) => p.socketId === socket.id);
+        if (!player) return;
+
+        roomManager.setPlayerReady(data.roomId, player.id, !player.isReady);
 
         io.to(data.roomId).emit('room-updated', { room });
 
-        console.log(`✋ ${player.name} 준비: ${player.isReady}`);
+        console.log(`??${player.name} 준�? ${player.isReady}`);
     });
 
-    // 게임 시작
+    // 게임 ?�작
     socket.on('start-game', (data: { roomId: string }) => {
-        const room = rooms.get(data.roomId);
+        const room = roomManager.getRoom(data.roomId);
         if (!room) return;
 
-        const player = room.players.find(p => p.socketId === socket.id);
+        const player = room.players.find((p: Player) => p.socketId === socket.id);
         if (!player || player.id !== room.hostId) {
-            socket.emit('error', { message: '호스트만 게임을 시작할 수 있습니다.' });
+            socket.emit('error', { message: '?�스?�만 게임???�작?????�습?�다.' });
             return;
         }
 
-        // 게임 시작을 위해 최소 플레이어 수를 확인 (2명 이상)
+        // 게임 ?�작???�해 최소 ?�레?�어 ?��? ?�인 (2�??�상)
         if (room.players.length < 2) {
-            socket.emit('error', { message: '게임을 시작하려면 최소 2명 이상의 플레이어가 필요합니다.' });
+            socket.emit('error', { message: '게임???�작?�려�?최소 2�??�상???�레?�어가 ?�요?�니??' });
             return;
         }
 
-        // Mark room as playing and initialize server-side turn tracking
-        room.isPlaying = true;
-        room.currentPlayerIndex = 0;
-        room.currentTurn = 1;
-
-        // Initialize authoritative player states (example defaults)
-        room.playerStates = {};
-        for (const p of room.players) {
-            room.playerStates[p.id] = {
-                health: 100,
-                mentalPower: 100,  // 초기 마나 100으로 설정
-                alive: true,
-                debuffs: []
-            };
-        }
+        // Start game using RoomManager
+        roomManager.startGame(data.roomId);
 
         // Initialize attack queue
         room.attackQueue = new AttackQueue();
@@ -219,30 +139,30 @@ io.on('connection', (socket: Socket) => {
         io.to(data.roomId).emit('game-starting', { room });
         io.to(data.roomId).emit('turn-start', { roomId: data.roomId, currentPlayerId: room.players[0].id, currentTurn: room.currentTurn });
 
-        console.log(`🎮 게임 시작: ${data.roomId} (turn=${room.currentTurn}, player=${room.players[0].name})`);
+        console.log(`?�� 게임 ?�작: ${data.roomId} (turn=${room.currentTurn}, player=${room.players[0].name})`);
     });
 
-    // 게임 액션 (카드 사용, 공격 등)
-    socket.on('game-action', (data: { roomId: string, action: any }) => {
-        const room = rooms.get(data.roomId);
+    // 게임 ?�션 (카드 ?�용, 공격 ??
+    socket.on('game-action', (data: { roomId: string, action: unknown }) => {
+        const room = roomManager.getRoom(data.roomId);
         if (!room || !room.isPlaying) return;
 
-        // 모든 플레이어에게 액션 브로드캐스트
+        // 모든 ?�레?�어?�게 ?�션 브로?�캐?�트
         socket.to(data.roomId).emit('game-action', data.action);
     });
 
-    // 공격 액션 (큐 기반으로 재구성)
-    socket.on('player-attack', (data: { roomId: string, attackerId: string, targetId: string, cards: any[], damage: number, requestId?: string, force?: boolean }) => {
-        const room = rooms.get(data.roomId);
+    // 공격 ?�션 (??기반?�로 ?�구??
+    socket.on('player-attack', (data: { roomId: string, attackerId: string, targetId: string, cards: Card[], damage: number, requestId?: string, force?: boolean }) => {
+        const room = roomManager.getRoom(data.roomId);
         if (!room || !room.isPlaying) {
-            socket.emit('error', { message: '게임 중이 아닌 방입니다.' });
+            socket.emit('error', { message: '게임 중이 ?�닌 방입?�다.' });
             return;
         }
 
         // Find attacker by socket id to ensure authenticity
-        const attacker = room.players.find(p => p.socketId === socket.id);
+        const attacker = room.players.find((p: Player) => p.socketId === socket.id);
         if (!attacker || attacker.id !== data.attackerId) {
-            socket.emit('error', { message: '유효하지 않은 공격자입니다.' });
+            socket.emit('error', { message: '?�효?��? ?��? 공격?�입?�다.' });
             return;
         }
 
@@ -251,7 +171,7 @@ io.on('connection', (socket: Socket) => {
         const currentPlayer = room.players[currentIndex];
         // Test override: allow force=true to bypass turn check (used by integration test harness)
         if (attacker.id !== currentPlayer.id && !data.force) {
-            socket.emit('error', { message: '현재 차례가 아닙니다.' });
+            socket.emit('error', { message: '?�재 차�?가 ?�닙?�다.' });
             return;
         }
 
@@ -285,7 +205,7 @@ io.on('connection', (socket: Socket) => {
         // Check if attacker has enough mana and deduct cost
         const attackerState = room.playerStates[attacker.id];
         if (!combatService.canAffordCards(attackerState, cards)) {
-            socket.emit('error', { message: '마나가 부족합니다!' });
+            socket.emit('error', { message: '마나가 부족합?�다!' });
             return;
         }
         
@@ -317,7 +237,7 @@ io.on('connection', (socket: Socket) => {
         const targetState = room.playerStates[data.targetId];
         const targetPlayer = room.players.find(p => p.id === data.targetId);
         if (!targetState || !targetPlayer) {
-            socket.emit('error', { message: '타겟을 찾을 수 없습니다.' });
+            socket.emit('error', { message: '?�겟을 찾을 ???�습?�다.' });
             return;
         }
 
@@ -342,7 +262,7 @@ io.on('connection', (socket: Socket) => {
             mentalDamage: mentalDamageFromCards || 0,
             heal: healFromCards || 0,
             cardsUsed: pendingCards,
-            cardsUsedIds: pendingCards.map((c: any) => c && c.id).filter(Boolean),
+            cardsUsedIds: pendingCards.map((c: Card) => c && c.id).filter(Boolean),
             attackAttribute,
             chainDepth: 0,  // Initial attack has depth 0
             status: 'pending',
@@ -357,7 +277,7 @@ io.on('connection', (socket: Socket) => {
         processNextAttack(room, attackItem);
     });
 
-    // 큐에서 다음 공격 처리
+    // ?�에???�음 공격 처리
     function processNextAttack(room: Room, attackItem: AttackQueueItem): void {
         // Broadcast announcement so UI can show center info for everyone
         io.to(room.id).emit('attack-announced', {
@@ -395,7 +315,7 @@ io.on('connection', (socket: Socket) => {
             expiresAt,
             chainSource: attackItem.chainSource
         });
-        console.log(`🔔 defend-request emitted to room ${room.id} for defender ${attackItem.targetId}, expiresAt=${expiresAt}`);
+        console.log(`?�� defend-request emitted to room ${room.id} for defender ${attackItem.targetId}, expiresAt=${expiresAt}`);
 
         // set timeout to auto-resolve if defender doesn't respond in time
         const timeoutId = setTimeout(() => {
@@ -409,26 +329,26 @@ io.on('connection', (socket: Socket) => {
         attackItem.timeoutId = timeoutId;
     }
 
-    // defender response handler - server authoritative defense resolution (큐 기반)
-    socket.on('player-defend', (data: { roomId: string, requestId: string, defenderId: string, cards: any[], defense?: number }) => {
-        const room = rooms.get(data.roomId);
+    // defender response handler - server authoritative defense resolution (??기반)
+    socket.on('player-defend', (data: { roomId: string, requestId: string, defenderId: string, cards: Card[], defense?: number }) => {
+        const room = roomManager.getRoom(data.roomId);
         if (!room || !room.isPlaying) return;
 
         if (!room.attackQueue) {
-            socket.emit('error', { message: '공격 큐가 초기화되지 않았습니다.' });
+            socket.emit('error', { message: '공격 ?��? 초기?�되지 ?�았?�니??' });
             return;
         }
 
         // Find attack in queue by requestId
         const attackItem = room.attackQueue.getAttackByRequestId(data.requestId);
         if (!attackItem) {
-            socket.emit('error', { message: '해당 방어 요청을 찾을 수 없습니다.' });
+            socket.emit('error', { message: '?�당 방어 ?�청??찾을 ???�습?�다.' });
             return;
         }
 
         // validate defender
         if (attackItem.targetId !== data.defenderId) {
-            socket.emit('error', { message: '당신은 이 공격의 방어자가 아닙니다.' });
+            socket.emit('error', { message: '?�신?� ??공격??방어?��? ?�닙?�다.' });
             return;
         }
 
@@ -447,7 +367,7 @@ io.on('connection', (socket: Socket) => {
         if (totalDefenseCost > 0 && room.playerStates) {
             const defenderState = room.playerStates[data.defenderId];
             if (!defenderState || defenderState.mentalPower < totalDefenseCost) {
-                socket.emit('error', { message: '마나가 부족합니다!' });
+                socket.emit('error', { message: '마나가 부족합?�다!' });
                 return;
             }
             // Deduct mana
@@ -465,7 +385,7 @@ io.on('connection', (socket: Socket) => {
         resolveAttackFromQueue(room, data.requestId, defenderCards);
     });
 
-    // 큐에서 공격 해결 함수
+    // ?�에??공격 ?�결 ?�수
     function resolveAttackFromQueue(room: Room, requestId: string, defenderCards: Card[] | null): void {
         if (!room.attackQueue) return;
 
@@ -743,44 +663,32 @@ io.on('connection', (socket: Socket) => {
         io.to(room.id).emit('turn-end', { roomId: room.id, playerId: attackItem.attackerId, nextPlayerId });
         io.to(room.id).emit('turn-start', { roomId: room.id, currentPlayerId: nextPlayerId, currentTurn: room.currentTurn });
 
-        console.log(`✅ Attack resolved: ${attackItem.id}, next player: ${nextPlayerId}`);
+        console.log(`??Attack resolved: ${attackItem.id}, next player: ${nextPlayerId}`);
     }
 
     // helper to resolve pending attack with no defense (DEPRECATED - kept for compatibility)
-    function resolvePendingAttack(room: Room, pendingId: string, defenderCards: any[] | null) {
+    function resolvePendingAttack(room: Room, pendingId: string, defenderCards: Card[] | null) {
         const pending = room.pendingAttacks && room.pendingAttacks[pendingId];
         if (!pending) return;
 
-        // apply heal first (heals are not blocked by defense), then damage
         const targetState = room.playerStates && room.playerStates[pending.targetId];
-        const prevHealth = targetState ? targetState.health : 0;
-        const finalDamage = pending.damage || 0; // no defense
+        if (!targetState) return;
 
-        if (pending.heal && pending.heal > 0 && targetState) {
-            targetState.health = Math.min(100, (targetState.health || 0) + pending.heal);
+        const prevHealth = targetState.health;
+        const finalDamage = pending.damage || 0;
+        const healAmount = pending.heal || 0;
+
+        // Apply heal using CombatService
+        if (healAmount > 0) {
+            combatService.applyHeal(targetState, healAmount);
         }
 
-        if (targetState) {
-            targetState.health = Math.max(0, (targetState.health || 0) - finalDamage);
-            if (targetState.health <= 0) targetState.alive = false;
-        }
+        // Apply damage using CombatService
+        const { finalHealthDamage } = combatService.applyDamage(targetState, finalDamage, 0, 0);
 
-        // apply card effects (debuffs) from attacker's cards when no defense used
-        const appliedDebuffs: string[] = [];
-        try {
-            const atkCards = pending.cardsUsed || [];
-            for (const ac of atkCards) {
-                if (ac && ac.effect && ac.effect !== 'reflect' && ac.effect !== 'bounce') {
-                    if (targetState) {
-                        targetState.debuffs = targetState.debuffs || [];
-                        if (!targetState.debuffs.includes(ac.effect)) {
-                            targetState.debuffs.push(ac.effect);
-                            appliedDebuffs.push(ac.effect);
-                        }
-                    }
-                }
-            }
-        } catch (e) {}
+        // Extract and apply debuffs using CombatService
+        const atkCards = (pending.cardsUsed || []) as Card[];
+        const appliedDebuffs = combatService.applyDebuffs(targetState, atkCards);
 
         // Advance turn
         const currentIndex = room.currentPlayerIndex ?? 0;
@@ -822,27 +730,27 @@ io.on('connection', (socket: Socket) => {
         io.to(room.id).emit('turn-start', { roomId: room.id, currentPlayerId: nextPlayerId, currentTurn: room.currentTurn });
     }
 
-    // 턴 종료
+    // ??종료
     socket.on('turn-end', (data: { roomId: string, playerId: string, nextPlayerId: string }) => {
-        const room = rooms.get(data.roomId);
+        const room = roomManager.getRoom(data.roomId);
         if (!room || !room.isPlaying) return;
 
-        console.log(`🔄 턴 종료: ${data.playerId} -> ${data.nextPlayerId}`);
+        console.log(`?�� ??종료: ${data.playerId} -> ${data.nextPlayerId}`);
         io.to(data.roomId).emit('turn-end', data);
     });
 
-    // 특수 이벤트
-    socket.on('special-event', (data: { roomId: string, eventType: string, eventData: any }) => {
-        const room = rooms.get(data.roomId);
+    // ?�수 ?�벤??
+    socket.on('special-event', (data: { roomId: string, eventType: string, eventData: unknown }) => {
+        const room = roomManager.getRoom(data.roomId);
         if (!room || !room.isPlaying) return;
 
-        console.log(`✨ 특수 이벤트: ${data.eventType}`);
+        console.log(`???�수 ?�벤?? ${data.eventType}`);
         io.to(data.roomId).emit('special-event', data);
     });
 
     // TEST-HOOK: forcefully set a player's authoritative health (for integration tests)
     socket.on('force-set-health', (data: { roomId: string, playerId: string, health: number }) => {
-        const room = rooms.get(data.roomId);
+        const room = roomManager.getRoom(data.roomId);
         if (!room || !room.isPlaying) return;
         room.playerStates = room.playerStates || {};
         room.playerStates[data.playerId] = room.playerStates[data.playerId] || { health: 100, mentalPower: 100, alive: true };
@@ -851,21 +759,21 @@ io.on('connection', (socket: Socket) => {
         io.to(data.roomId).emit('player-state-update', { roomId: data.roomId, playerId: data.playerId, health: room.playerStates[data.playerId].health });
     });
 
-    // 플레이어 상태 업데이트
-    socket.on('player-state-update', (data: { roomId: string, playerId: string, health: number, mentalPower: number, cards: any[] }) => {
-        const room = rooms.get(data.roomId);
+    // ?�레?�어 ?�태 ?�데?�트
+    socket.on('player-state-update', (data: { roomId: string, playerId: string, health: number, mentalPower: number, cards: Card[] }) => {
+        const room = roomManager.getRoom(data.roomId);
         if (!room || !room.isPlaying) return;
 
         io.to(data.roomId).emit('player-state-update', data);
     });
 
     // 게임 종료
-    socket.on('game-over', (data: { roomId: string, winnerId: string, stats: any }) => {
-        const room = rooms.get(data.roomId);
+    socket.on('game-over', (data: { roomId: string, winnerId: string, stats: unknown }) => {
+        const room = roomManager.getRoom(data.roomId);
         if (!room) return;
 
         room.isPlaying = false;
-        console.log(`🏁 게임 종료: ${data.roomId}, 승자: ${data.winnerId}`);
+        console.log(`?�� 게임 종료: ${data.roomId}, ?�자: ${data.winnerId}`);
         io.to(data.roomId).emit('game-over', data);
     });
 
@@ -873,45 +781,21 @@ io.on('connection', (socket: Socket) => {
     socket.on('disconnect', () => {
         console.log(`❌ 클라이언트 연결 해제: ${socket.id}`);
 
-        // 플레이어가 속한 방 찾기
-        for (const [roomId, room] of rooms.entries()) {
-            const playerIndex = room.players.findIndex(p => p.socketId === socket.id);
-            if (playerIndex !== -1) {
-                const player = room.players[playerIndex];
-                room.players.splice(playerIndex, 1);
-
-                // Remove authoritative player state if present
-                if (room.playerStates && player && player.id) {
-                    delete room.playerStates[player.id];
-                }
-
-                // 방이 비었으면 삭제
-                if (room.players.length === 0) {
-                    rooms.delete(roomId);
-                    console.log(`🗑️ 방 삭제: ${roomId}`);
-                } else {
-                    // 호스트가 나갔으면 다음 플레이어가 호스트
-                    if (room.hostId === player.id) {
-                        room.hostId = room.players[0].id;
-                    }
-                    io.to(roomId).emit('room-updated', { room });
-                    io.to(roomId).emit('player-disconnected', { playerName: player.name });
-                }
-                break;
+        const result = roomManager.removePlayer(socket.id);
+        
+        if (result.roomId) {
+            if (result.isEmpty) {
+                console.log(`🗑️ 방 삭제: ${result.roomId}`);
+            } else if (result.room && result.player) {
+                io.to(result.roomId).emit('room-updated', { room: result.room });
+                io.to(result.roomId).emit('player-disconnected', { playerName: result.player.name });
             }
         }
     });
 
     // 방 목록 요청
     socket.on('get-rooms', (data?: { gameType?: 'normal' | 'ranked' }) => {
-        let availableRooms = Array.from(rooms.values())
-            .filter(room => !room.isPlaying && room.players.length < room.maxPlayers);
-
-        // 선택한 gameType이 있으면 해당 타입의 방만 반환
-        if (data && data.gameType) {
-            availableRooms = availableRooms.filter(r => r.gameType === data.gameType);
-        }
-
+        const availableRooms = roomManager.getAvailableRooms(data?.gameType);
         socket.emit('rooms-list', { rooms: availableRooms });
     });
 });
@@ -919,7 +803,7 @@ io.on('connection', (socket: Socket) => {
 const PORT = process.env.PORT || 3001;
 
 httpServer.listen(PORT, () => {
-    console.log(`🚀 서버 실행 중: http://localhost:${PORT}`);
+    console.log(`?? ?�버 ?�행 �? http://localhost:${PORT}`);
 });
 
 // Cleanup processedRequests older than TTL to avoid memory growth
@@ -928,7 +812,7 @@ const CLEANUP_INTERVAL = 10 * 60 * 1000; // 10 minutes
 
 setInterval(() => {
     const cutoff = Date.now() - PROCESSED_REQUEST_TTL;
-    for (const [, room] of rooms.entries()) {
+    for (const room of roomManager.getAllRooms()) {
         if (!room.processedRequests) continue;
         for (const [reqId, entry] of Object.entries(room.processedRequests)) {
             if (entry.timestamp < cutoff) {
@@ -941,3 +825,5 @@ setInterval(() => {
         }
     }
 }, CLEANUP_INTERVAL);
+
+

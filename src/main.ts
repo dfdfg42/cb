@@ -311,10 +311,22 @@ class Game {
             }
 
             // 서버 권위 결과를 적용
+            if (attacker) {
+                // apply attacker's mental power (after mana cost deduction)
+                if (typeof resolved.attackerMentalPower === 'number') {
+                    (attacker as any).mentalPower = resolved.attackerMentalPower;
+                }
+            }
+            
             if (target) {
                 // apply health
                 (target as any).health = resolved.targetHealth;
                 (target as any).isAlive = !resolved.eliminated;
+                
+                // apply mental power
+                if (typeof resolved.targetMentalPower === 'number') {
+                    (target as any).mentalPower = resolved.targetMentalPower;
+                }
             }
 
             // 사용된 카드 제거 (공격자 손패) — 서버가 보낸 카드 객체/ids를 사용
@@ -409,7 +421,35 @@ class Game {
             this.playersManager.setActivePlayer(resolved.nextPlayerId);
             uiManager.updateTurnNumber(resolved.currentTurn);
 
-            uiManager.addLogMessage(`${resolved.attackerName} -> ${resolved.targetName}: ${resolved.damageApplied} 데미지 (서버 기준)`);
+            // Build damage message including mental damage
+            let damageMsg = '';
+            
+            // Check for special effects (reflect/bounce)
+            if (resolved.isReflected) {
+                const originalDmg = resolved.originalDamage || 0;
+                const originalMental = resolved.originalMentalDamage || 0;
+                damageMsg = `🔄 ${resolved.targetName}이(가) 되받아치기 발동! ${originalDmg} 체력 데미지`;
+                if (originalMental > 0) {
+                    damageMsg += ` + ${originalMental} 정신 데미지`;
+                }
+                damageMsg += `를 막았습니다!`;
+            } else if (resolved.isBounced) {
+                const originalDmg = resolved.originalDamage || 0;
+                const originalMental = resolved.originalMentalDamage || 0;
+                damageMsg = `🌀 ${resolved.targetName}이(가) 튕기기 발동! ${originalDmg} 체력 데미지`;
+                if (originalMental > 0) {
+                    damageMsg += ` + ${originalMental} 정신 데미지`;
+                }
+                damageMsg += `를 막았습니다!`;
+            } else {
+                // Normal attack
+                damageMsg = `${resolved.attackerName} -> ${resolved.targetName}: ${resolved.damageApplied} 체력 데미지`;
+                if (resolved.mentalDamageApplied && resolved.mentalDamageApplied > 0) {
+                    damageMsg += `, ${resolved.mentalDamageApplied} 정신 데미지`;
+                }
+                damageMsg += ` (서버 기준)`;
+            }
+            uiManager.addLogMessage(damageMsg);
 
             // applied debuffs (if any)
             if (resolved.appliedDebuffs && Array.isArray(resolved.appliedDebuffs) && resolved.appliedDebuffs.length > 0) {
@@ -483,14 +523,40 @@ class Game {
         // defend request comes to the defender specifically
         socketClient.setOnDefendRequest((data: any) => {
             console.log('defend-request handler in client', data);
-            // store request id for confirmDefense
+            
+            // ✅ 큐 기반 시스템: 자기가 방어자일 때만 pendingDefenseRequestId 업데이트
+            // 다른 플레이어의 defend-request는 구경만 함
+            if (data.defenderId !== this.currentPlayerId) {
+                console.log(`[DEBUG] defend-request for other player (${data.defenderId}), ignoring for local state`);
+                // Show info but don't update local pending request
+                const attrEl = document.getElementById('defend-attribute');
+                const dmgEl = document.getElementById('defend-damage');
+                if (attrEl) attrEl.textContent = `속성: ${data.attackAttribute || '-'} `;
+                if (dmgEl) dmgEl.textContent = `데미지: ${data.damage}`;
+
+                // show central combat UI (attacker cards) so everyone can see
+                if (this.combatUI) {
+                    this.combatUI.showAttackCards(data.cardsUsed || []);
+                    this.combatUI.showDefenseCards([]);
+                }
+                return; // 여기서 종료 - 다른 사람의 방어 요청
+            }
+
+            // 이 플레이어가 방어자인 경우만 처리
+            console.log(`[DEBUG] defend-request for LOCAL player, setting pendingDefenseRequestId`);
             this.pendingDefenseRequestId = data.requestId;
             console.log(`[DEBUG] pendingDefenseRequestId set -> ${this.pendingDefenseRequestId}`);
 
             const attrEl = document.getElementById('defend-attribute');
             const dmgEl = document.getElementById('defend-damage');
             if (attrEl) attrEl.textContent = `속성: ${data.attackAttribute || '-'} `;
-            if (dmgEl) dmgEl.textContent = `데미지: ${data.damage}`;
+            
+            // Display both health damage and mental damage
+            let damageText = `체력 데미지: ${data.damage}`;
+            if (data.mentalDamage && data.mentalDamage > 0) {
+                damageText += ` | 정신 데미지: ${data.mentalDamage}`;
+            }
+            if (dmgEl) dmgEl.textContent = damageText;
 
             // show central combat UI (attacker cards) so defender can see what they're defending against
             if (this.combatUI) {
@@ -498,16 +564,16 @@ class Game {
                 this.combatUI.showDefenseCards([]);
             }
 
+            // ✅ 아래 코드는 위에서 defenderId 체크로 이미 보장됨
             // If the local player is the defender, enter defense selection mode and mark eligible cards
-            if (data.defenderId === this.currentPlayerId) {
-                // Do NOT open the blocking modal. Instead, show attack info in the central combat UI
-                // so the defender can select defense cards from the hand below.
-                // Ensure central names/cards are visible
-                try {
-                    const attacker = this.gameManager!.getPlayerById(data.attackerId);
-                    const defender = this.gameManager!.getPlayerById(data.targetId || data.defenderId);
-                    if (attacker && defender) uiManager.showCombatNames(attacker.name, defender.name);
-                } catch (e) {
+            // Do NOT open the blocking modal. Instead, show attack info in the central combat UI
+            // so the defender can select defense cards from the hand below.
+            // Ensure central names/cards are visible
+            try {
+                const attacker = this.gameManager!.getPlayerById(data.attackerId);
+                const defender = this.gameManager!.getPlayerById(data.targetId || data.defenderId);
+                if (attacker && defender) uiManager.showCombatNames(attacker.name, defender.name);
+            } catch (e) {
                     // ignore if gameManager not available
                 }
 
@@ -637,32 +703,8 @@ class Game {
                 } else {
                     console.log('[DEBUG] summaryTakeBtn element NOT found when trying to show it');
                 }
-
-                return;
-            }
-
-            // enable inline action buttons for non-local defenders (view-only)
-            const useBtn = document.getElementById('use-defense-btn') as HTMLButtonElement | null;
-            const takeBtn = document.getElementById('take-it-btn') as HTMLButtonElement | null;
-            if (useBtn) {
-                useBtn.style.display = 'inline-block';
-                useBtn.onclick = () => {
-                    // allow player to pick defense cards; reuse confirmDefense
-                    this.confirmDefense();
-                };
-            }
-            if (takeBtn) {
-                takeBtn.style.display = 'inline-block';
-                takeBtn.onclick = () => {
-                    // send empty defense (just take it) with requestId so server applies full damage + effects
-                    if (this.isMultiplayer && this.pendingDefenseRequestId) {
-                        socketClient.sendDefendWithRequest(this.pendingDefenseRequestId, this.currentPlayerId, [], 0);
-                    }
-                    // hide inline buttons after action
-                    if (useBtn) { useBtn.style.display = 'none'; useBtn.onclick = null; }
-                    if (takeBtn) { takeBtn.style.display = 'none'; takeBtn.onclick = null; }
-                };
-            }
+            // ✅ 이미 위에서 로컬 플레이어만 처리하므로 여기 도달하지 않음
+            // 아래 코드는 더 이상 실행되지 않음 (early return)
         });
         
         // 에러 처리

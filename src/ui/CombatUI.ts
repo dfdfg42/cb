@@ -88,6 +88,7 @@ export class CombatUI {
         const cards = resolved.cardsUsed || [];
         const defenseCards = resolved.defenseCards || [];
         const damage = resolved.damageApplied || 0;
+        const mentalDamage = resolved.mentalDamageApplied || 0;
         const heal = resolved.healApplied || 0;
 
         if (this.summaryPlayersEl) this.summaryPlayersEl.textContent = `${attackerName} → ${defenderName}`;
@@ -99,7 +100,8 @@ export class CombatUI {
         }
 
         if (this.summaryDamageEl) {
-            let dmgText = `${damage} 데미지`;
+            let dmgText = `${damage} 체력 데미지`;
+            if (mentalDamage > 0) dmgText += ` • ${mentalDamage} 정신 데미지`;
             if (heal > 0) dmgText += ` • +${heal} HP 회복`;
             this.summaryDamageEl.textContent = dmgText;
         }
