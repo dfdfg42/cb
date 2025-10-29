@@ -113,22 +113,25 @@
 
 ---
 
-## Phase 3: Client 리팩토링
+## Phase 3: Client 리팩토링 🎯 **[진행 중]**
 
-### 3.1 GameManager 책임 분리
-- [ ] 📝 `src/game/CombatManager.ts` 생성
-  - [ ] selectAttackCards()
-  - [ ] selectDefenseCards()
-  - [ ] applyDamage()
-  - [ ] resolveAttack()
-- [ ] 📝 `src/game/CardValidator.ts` 생성
-  - [ ] canPlayCards()
-  - [ ] validateAttackCards()
-  - [ ] validateDefenseCards()
-  - [ ] validateManaCost()
-- [ ] 📝 `src/game/EventEmitter.ts` 생성
-  - [ ] 이벤트 발행 시스템
-  - [ ] 구독/구독 해제
+### 3.1 GameManager 책임 분리 🔄
+- [x] ✅ `src/game/CombatManager.ts` 생성
+  - [x] ✅ selectAttackCards()
+  - [x] ✅ selectDefenseCards()
+  - [x] ✅ applyDamage()
+  - [x] ✅ resolveAttack()
+  - [x] ✅ removeUsedCards()
+  - [x] ✅ applyMentalBreakDebuff()
+- [x] ✅ `src/game/CardValidator.ts` 생성
+  - [x] ✅ canPlayCards()
+  - [x] ✅ validateAttackCards()
+  - [x] ✅ validateDefenseCards()
+  - [x] ✅ validateManaCost()
+  - [x] ✅ validatePlusCards()
+- [x] ✅ `src/game/EventEmitter.ts` 생성
+  - [x] ✅ 이벤트 발행 시스템 (on, once, off)
+  - [x] ✅ 구독/구독 해제 (emit, removeAllListeners)
 - [ ] 🚧 GameManager.ts 리팩토링
   - [ ] 전투 로직 → CombatManager로 이동
   - [ ] 검증 로직 → CardValidator로 이동
