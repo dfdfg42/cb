@@ -113,7 +113,7 @@
 
 ---
 
-## Phase 3: Client 리팩토링 🎯 **[진행 중]**
+## Phase 3: Client 리팩토링 ✅ **[완료!]**
 
 ### 3.1 GameManager 책임 분리 🔄
 - [x] ✅ `src/game/CombatManager.ts` 생성
@@ -150,12 +150,14 @@
 - [x] ✅ UIManager가 IUIManager 인터페이스 구현
 
 ### 3.3 NetworkManager 개선 🔄
-- [ ] 📝 Socket.IO 클라이언트로 전환 검토
-  - [ ] WebSocket vs Socket.IO 호환성 확인
-  - [ ] 필요시 Socket.IO 클라이언트로 마이그레이션
-- [ ] 📝 타입 안정성 강화
-  - [ ] 이벤트 타입 정의
-  - [ ] Type guard 추가
+- [x] ✅ Socket.IO 클라이언트로 전환 검토
+  - [x] ✅ 이미 Socket.IO 사용 중 (SocketClient.ts)
+  - [x] ✅ NetworkManager.ts는 사용되지 않는 레거시 코드
+- [x] ✅ 타입 안정성 강화
+  - [x] ✅ ServerRoom, ServerPlayer 인터페이스 정의됨
+  - [x] ✅ 이벤트 타입 콜백 정의됨
+
+**Note**: NetworkManager.ts는 사용되지 않으므로 Phase 6에서 제거 예정
 
 ---
 
