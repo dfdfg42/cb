@@ -141,14 +141,15 @@
   - [x] ✅ 597줄 → 376줄로 축소 (37% 감소!)
 
 ### 3.2 UIManager 의존성 주입 🔄
-- [ ] 📝 `src/ui/IUIManager.ts` 인터페이스 생성
-- [ ] 🚧 GameManager에 UIManager 주입
-  - [ ] 생성자에서 주입받도록 변경
-  - [ ] 전역 싱글톤 제거
-- [ ] 🚧 TurnManager에 UIManager 주입
-- [ ] 🚧 CombatManager에 UIManager 주입
+- [x] ✅ `src/ui/IUIManager.ts` 인터페이스 생성
+- [x] ✅ GameManager에 UIManager 주입
+  - [x] ✅ 생성자에서 주입받도록 변경
+  - [x] ✅ 인터페이스 타입으로 선언 (IUIManager)
+- [x] ✅ CombatManager에 UIManager 주입
+  - [x] ✅ 인터페이스 타입으로 선언
+- [x] ✅ UIManager가 IUIManager 인터페이스 구현
 
-### 3.3 NetworkManager 개선
+### 3.3 NetworkManager 개선 🔄
 - [ ] 📝 Socket.IO 클라이언트로 전환 검토
   - [ ] WebSocket vs Socket.IO 호환성 확인
   - [ ] 필요시 Socket.IO 클라이언트로 마이그레이션

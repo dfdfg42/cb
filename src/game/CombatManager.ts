@@ -1,14 +1,14 @@
 import { Player, Card, CardType, CardEffect, GameSession, Debuff, DebuffType } from '../types';
-import { UIManager } from '../ui/UIManager';
+import { IUIManager } from '../ui/IUIManager';
 
 /**
  * CombatManager - 전투 로직 전담 클래스
  * 공격/방어 선택, 데미지 계산, 특수 효과 처리
  */
 export class CombatManager {
-    private uiManager: UIManager;
+    private uiManager: IUIManager;
 
-    constructor(uiManager: UIManager) {
+    constructor(uiManager: IUIManager) {
         this.uiManager = uiManager;
     }
 
@@ -17,8 +17,7 @@ export class CombatManager {
      */
     public selectAttackCards(
         cards: Card[],
-        currentPlayer: Player,
-        session: GameSession
+        currentPlayer: Player
     ): boolean {
         if (cards.length === 0) {
             this.uiManager.showAlert('카드를 선택해주세요!');

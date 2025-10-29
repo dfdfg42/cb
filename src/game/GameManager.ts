@@ -1,5 +1,5 @@
 import { GameSession, GameState, GameType, Player, Card, DebuffType } from '../types';
-import { UIManager } from '../ui/UIManager';
+import { IUIManager } from '../ui/IUIManager';
 import { createShuffledDeck } from '../data/cards';
 import { CombatManager } from './CombatManager';
 import { CardValidator } from './CardValidator';
@@ -12,11 +12,11 @@ import { EventEmitter } from './EventEmitter';
 export class GameManager {
     private session: GameSession;
     private localPlayerId: string;
-    private uiManager: UIManager;
+    private uiManager: IUIManager;
     private combatManager: CombatManager;
     private eventEmitter: EventEmitter;
 
-    constructor(gameType: GameType, players: Player[], localPlayerId: string, uiManager: UIManager) {
+    constructor(gameType: GameType, players: Player[], localPlayerId: string, uiManager: IUIManager) {
         this.localPlayerId = localPlayerId;
         this.uiManager = uiManager;
         this.combatManager = new CombatManager(uiManager);
