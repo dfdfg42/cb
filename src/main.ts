@@ -1728,7 +1728,7 @@ class Game {
         
         this.currentPlayerId = testPlayers[0].id;
         
-        this.gameManager = new GameManager('normal' as any, testPlayers, this.currentPlayerId);
+        this.gameManager = new GameManager('normal' as any, testPlayers, this.currentPlayerId, uiManager);
         this.setupGameUI();
     }
     
@@ -1768,7 +1768,7 @@ class Game {
         this.currentPlayerId = multiLocalPlayer.id;
         
         // GameManager 초기화
-        this.gameManager = new GameManager('normal' as any, multiPlayers, this.currentPlayerId);
+        this.gameManager = new GameManager('normal' as any, multiPlayers, this.currentPlayerId, uiManager);
         this.setupGameUI();
     }
     
