@@ -161,17 +161,22 @@
 
 ---
 
-## Phase 4: 공유 로직 및 검증
+## Phase 4: 공유 로직 및 검증 🎯 **[진행 중]**
 
-### 4.1 공유 디렉토리 생성
-- [ ] 📝 `shared/` 디렉토리 생성
-- [ ] 📝 `shared/validators/CardValidator.ts`
-  - [ ] 카드 사용 규칙 검증
-  - [ ] 클라이언트/서버 공통 사용
-- [ ] 📝 `shared/validators/CombatValidator.ts`
-  - [ ] 공격/방어 규칙 검증
-- [ ] 📝 `shared/types/` 공통 타입 정의
-- [ ] 📝 `shared/constants/` 공통 상수
+### 4.1 공유 디렉토리 생성 🔄
+- [x] ✅ `shared/` 디렉토리 생성
+- [x] ✅ `shared/validators/CardValidator.ts`
+  - [x] ✅ 카드 사용 규칙 검증 (Phase 1에서 생성됨)
+  - [x] ✅ ValidationResult 통합
+- [x] ✅ `shared/validators/CombatValidator.ts`
+  - [x] ✅ 공격/방어 규칙 검증 (Phase 1에서 생성됨)
+- [x] ✅ `shared/types/` 공통 타입 정의
+  - [x] ✅ CardType, CardEffect, DebuffType enum
+  - [x] ✅ ICard, IDebuff, IPlayerState 인터페이스
+  - [x] ✅ ValidationResult 인터페이스
+- [x] ✅ `shared/constants/` 공통 상수
+  - [x] ✅ GameConstants.ts (클라이언트/서버 통합)
+- [x] ✅ `shared/index.ts` 통합 export
 
 ### 4.2 검증 로직 통합
 - [ ] 🚧 서버에서 공유 validator 사용

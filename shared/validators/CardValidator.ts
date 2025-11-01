@@ -5,6 +5,8 @@
  * Used by both client and server to ensure consistency.
  */
 
+import { ValidationResult } from '../types';
+
 export interface Card {
     id: string;
     name: string;
@@ -18,11 +20,6 @@ export interface Card {
     healthDamage?: number;
     mentalDamage?: number;
     effect?: string;
-}
-
-export interface ValidationResult {
-    valid: boolean;
-    error?: string;
 }
 
 export class CardValidator {
