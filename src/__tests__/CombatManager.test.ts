@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { CombatManager } from '../game/CombatManager';
 import { IUIManager } from '../ui/IUIManager';
-import { Player, Card, CardType, CardEffect, GameSession } from '../types';
+import { Player, Card, CardType, CardEffect } from '../types';
 
 describe('CombatManager', () => {
   let mockUIManager: IUIManager;
@@ -68,7 +68,6 @@ describe('CombatManager', () => {
         type: CardType.FIELD_MAGIC,
         mentalCost: 30,
         plusLevel: 0,
-        attribute: 'fire',
         defense: 0,
         healthDamage: 0,
         mentalDamage: 0,
@@ -100,7 +99,6 @@ describe('CombatManager', () => {
         type: CardType.FIELD_MAGIC,
         mentalCost: 30,
         plusLevel: 0,
-        attribute: 'fire',
         defense: 0,
         healthDamage: 0,
         mentalDamage: 0,
@@ -210,7 +208,6 @@ describe('CombatManager', () => {
         type: CardType.DEFENSE,
         mentalCost: 5,
         plusLevel: 0,
-        attribute: '',
         defense: 10,
         healthDamage: 0,
         mentalDamage: 0,
@@ -229,7 +226,6 @@ describe('CombatManager', () => {
         type: CardType.ATTACK,
         mentalCost: 10,
         plusLevel: 0,
-        attribute: '',
         defense: 0,
         healthDamage: 20,
         mentalDamage: 0,

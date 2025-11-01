@@ -5,7 +5,9 @@
  * Used by both client and server to ensure consistency.
  */
 
-import { ValidationResult } from '../types';
+import { ValidationResult as ImportedValidationResult } from '../types';
+
+export type ValidationResult = ImportedValidationResult;
 
 export interface Card {
     id: string;
