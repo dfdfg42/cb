@@ -1,6 +1,7 @@
 import { Screen } from '../types';
+import { IUIManager } from './IUIManager';
 
-export class UIManager {
+export class UIManager implements IUIManager {
     private currentScreen: Screen = Screen.MAIN;
     
     constructor() {

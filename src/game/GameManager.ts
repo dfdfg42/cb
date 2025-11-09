@@ -1,13 +1,26 @@
-import { GameSession, GameState, GameType, Player, Card, CardType, CardEffect, DebuffType, Debuff } from '../types';
-import { uiManager } from '../ui/UIManager';
+import { GameSession, GameState, GameType, Player, Card, DebuffType } from '../types';
+import { IUIManager } from '../ui/IUIManager';
 import { createShuffledDeck } from '../data/cards';
+import { CombatManager } from './CombatManager';
+import { CardValidator } from './CardValidator';
+import { EventEmitter } from './EventEmitter';
 
+/**
+ * GameManager - 게임 흐름 제어 담당
+ * 전투 로직은 CombatManager, 검증은 CardValidator에 위임
+ */
 export class GameManager {
     private session: GameSession;
     private localPlayerId: string;
+    private uiManager: IUIManager;
+    private combatManager: CombatManager;
+    private eventEmitter: EventEmitter;
 
-    constructor(gameType: GameType, players: Player[], localPlayerId: string) {
+    constructor(gameType: GameType, players: Player[], localPlayerId: string, uiManager: IUIManager) {
         this.localPlayerId = localPlayerId;
+        this.uiManager = uiManager;
+        this.combatManager = new CombatManager(uiManager);
+        this.eventEmitter = new EventEmitter();
         
         // 게임 세션 초기화
         this.session = {
@@ -25,6 +38,10 @@ export class GameManager {
         this.initializeGame();
     }
 
+    // ===========================================
+    // 게임 초기화 및 턴 관리
+    // ===========================================
+
     private initializeGame(): void {
         console.log('🎮 게임 초기화 중...');
         
@@ -39,8 +56,11 @@ export class GameManager {
         // 첫 번째 플레이어 턴 시작
         this.startTurn();
         
-        uiManager.addLogMessage('게임이 시작되었습니다!');
-        uiManager.addLogMessage(`${this.getCurrentPlayer().name}의 턴입니다.`);
+        this.uiManager.addLogMessage('게임이 시작되었습니다!');
+        this.uiManager.addLogMessage(`${this.getCurrentPlayer().name}의 턴입니다.`);
+        
+        // 게임 시작 이벤트 발행
+        this.eventEmitter.emit('game:start', this.session);
     }
 
     private drawCardsFromDeck(count: number): Card[] {
@@ -70,132 +90,103 @@ export class GameManager {
             this.triggerSpecialEvent();
         }
 
-        uiManager.updateTurnNumber(this.session.currentTurn);
+        this.uiManager.updateTurnNumber(this.session.currentTurn);
         console.log(`턴 ${this.session.currentTurn}: ${currentPlayer.name}의 차례`);
+        
+        // 턴 시작 이벤트 발행
+        this.eventEmitter.emit('turn:start', currentPlayer, this.session.currentTurn);
     }
+
+    public endTurn(): void {
+        // 다음 플레이어로 턴 넘김
+        const currentIndex = this.session.players.findIndex(p => p.id === this.session.currentPlayerId);
+        let nextIndex = (currentIndex + 1) % this.session.players.length;
+        
+        // 살아있는 플레이어 찾기
+        let attempts = 0;
+        while (!this.session.players[nextIndex].isAlive && attempts < 4) {
+            nextIndex = (nextIndex + 1) % this.session.players.length;
+            attempts++;
+        }
+
+        const previousPlayerId = this.session.currentPlayerId;
+        this.session.currentPlayerId = this.session.players[nextIndex].id;
+        this.session.currentTurn++;
+        this.session.state = GameState.PLAYING;
+
+        // 턴 종료 이벤트 발행
+        this.eventEmitter.emit('turn:end', previousPlayerId, this.session.currentPlayerId);
+
+        this.startTurn();
+    }
+
+    // ===========================================
+    // 공격/방어 플로우
+    // ===========================================
 
     public selectAttackCards(cards: Card[]): boolean {
         const currentPlayer = this.getCurrentPlayer();
         
         // 현재 플레이어 확인
         if (currentPlayer.id !== this.localPlayerId) {
-            uiManager.showAlert('당신의 턴이 아닙니다!');
+            this.uiManager.showAlert('당신의 턴이 아닙니다!');
             return false;
         }
 
-        // 카드 선택 가능 여부 확인
-        if (!this.canPlayCards(cards, currentPlayer)) {
+        // CardValidator로 검증
+        const validation = CardValidator.canPlayCards(cards, currentPlayer);
+        if (!validation.valid) {
+            this.uiManager.showAlert(validation.error!);
             return false;
         }
 
         this.session.attackCards = cards;
         this.session.state = GameState.ATTACKING;
         
-        return true;
-    }
-
-    private canPlayCards(cards: Card[], player: Player): boolean {
-        if (cards.length === 0) {
-            uiManager.showAlert('카드를 선택해주세요!');
-            return false;
-        }
-
-        // 필드 마법 카드 확인
-        const fieldMagicCards = cards.filter(c => c.type === CardType.FIELD_MAGIC);
-        if (fieldMagicCards.length > 0) {
-            if (cards.length > 1) {
-                uiManager.showAlert('필드 마법은 단독으로만 사용 가능합니다!');
-                return false;
-            }
-            // 필드 마법은 정신력만 확인하면 됨
-            const mentalCost = fieldMagicCards[0].mentalCost;
-            if (mentalCost > player.mentalPower) {
-                uiManager.showAlert('정신력이 부족합니다!');
-                return false;
-            }
-            return true;
-        }
-
-        // 마법 카드는 1장만 가능
-        const magicCards = cards.filter(c => c.type === CardType.MAGIC);
-        if (magicCards.length > 1) {
-            uiManager.showAlert('마법 카드는 한 번에 1장만 사용 가능합니다!');
-            return false;
-        }
-
-        // 정신력 확인 (마법 카드)
-        const totalMentalCost = cards.reduce((sum, card) => sum + card.mentalCost, 0);
-        if (totalMentalCost > player.mentalPower) {
-            uiManager.showAlert('정신력이 부족합니다!');
-            return false;
-        }
-
-        // + 접두사 카드 확인
-        const plusCards = cards.filter(c => c.plusLevel > 0);
-        if (plusCards.length > 0) {
-            const firstPlusCard = plusCards[0];
-            const maxCards = firstPlusCard.plusLevel + 1;
-            
-            // 같은 카드만 선택 가능
-            const allSameCard = plusCards.every(c => c.name === firstPlusCard.name);
-            if (!allSameCard) {
-                uiManager.showAlert('+ 접두사 카드는 같은 종류만 함께 사용 가능합니다!');
-                return false;
-            }
-            
-            if (plusCards.length > maxCards) {
-                uiManager.showAlert(`이 카드는 최대 ${maxCards}장까지 사용 가능합니다!`);
-                return false;
-            }
-        }
-
-        // 일반 공격 카드 + 다른 카드 혼합 불가
-        const normalAttacks = cards.filter(c => c.type === CardType.ATTACK && c.plusLevel === 0);
-        if (normalAttacks.length > 0 && cards.length > 1) {
-            uiManager.showAlert('일반 공격 카드는 1장만 사용 가능합니다!');
-            return false;
-        }
-
+        // 공격 카드 선택 이벤트 발행
+        this.eventEmitter.emit('attack:cards-selected', cards, currentPlayer);
+        
         return true;
     }
 
     public selectDefender(defenderId: string): void {
         const defender = this.session.players.find(p => p.id === defenderId);
         if (!defender || !defender.isAlive) {
-            uiManager.showAlert('유효하지 않은 대상입니다!');
+            this.uiManager.showAlert('유효하지 않은 대상입니다!');
             return;
         }
 
         this.session.defenderId = defenderId;
         this.session.state = GameState.DEFENDING;
 
-        // 공격이 확정되었을 때만 중앙 전투 이름을 표시합니다.
-        uiManager.showCombatNames(
+        // 공격이 확정되었을 때만 중앙 전투 이름 표시
+        this.uiManager.showCombatNames(
             this.getCurrentPlayer().name,
             defender.name
         );
 
-        uiManager.addLogMessage(
+        this.uiManager.addLogMessage(
             `${this.getCurrentPlayer().name}이(가) ${defender.name}을(를) 공격합니다!`
         );
+        
+        // 방어자 선택 이벤트 발행
+        this.eventEmitter.emit('defender:selected', defender);
     }
 
     public selectDefenseCards(cards: Card[]): boolean {
         const defender = this.getDefender();
         if (!defender) return false;
 
-        // 방어 카드 확인
-        const validDefense = cards.every(c => 
-            c.type === CardType.DEFENSE || 
-            c.type === CardType.MAGIC
-        );
-
-        if (!validDefense) {
-            uiManager.showAlert('방어 카드 또는 마법 카드만 사용 가능합니다!');
+        // CardValidator로 검증
+        if (!this.combatManager.selectDefenseCards(cards)) {
             return false;
         }
 
         this.session.defenseCards = cards;
+        
+        // 방어 카드 선택 이벤트 발행
+        this.eventEmitter.emit('defense:cards-selected', cards, defender);
+        
         return true;
     }
 
@@ -204,198 +195,62 @@ export class GameManager {
         const defender = this.getDefender();
         
         if (!defender) {
-            uiManager.showAlert('방어자가 지정되지 않았습니다!');
+            this.uiManager.showAlert('방어자가 지정되지 않았습니다!');
             return;
         }
 
-        // 공격/회복 처리: 카드별로 처리한다. 회복(HEAL)은 대상의 체력을 회복시키고
-        // 그 외(공격)는 체력/정신 데미지를 누적하여 적용한다.
-        let totalHealthDamage = 0;
-        let totalMentalDamage = 0;
+        // CombatManager에게 전투 해결 위임
+        const result = this.combatManager.resolveAttack(this.session, attacker, defender);
 
-        const extractHealAmount = (card: Card): number => {
-            // 우선적으로 healthDamage 필드를 사용
-            if (card.healthDamage && card.healthDamage > 0) return card.healthDamage;
-            // 정신 피해 필드에 수치가 들어있을 수 있으나, 힐은 description에 숫자로 적혀있는 경우가 있음
-            if (card.description) {
-                const m = card.description.match(/(\d+)/);
-                if (m) return parseInt(m[1], 10);
-            }
-            return 0;
-        };
-
-        // 필드 마법: 화염의 대지 (발동자 공격력 +5)
-        if (this.session.fieldMagic?.name === '화염의 대지' && 
-            this.session.fieldMagic.casterId === attacker.id) {
-            totalHealthDamage += 5;
-        }
-
-        // 필드 마법: 얼음 왕국 (적 공격력 -3)
-        if (this.session.fieldMagic?.name === '얼음 왕국' && 
-            this.session.fieldMagic.casterId !== attacker.id) {
-            totalHealthDamage = Math.max(0, totalHealthDamage - 3);
-        }
-
-        // 각 카드 적용: HEAL은 즉시 회복을 적용, 그 외는 누적 데미지로 처리
-        this.session.attackCards.forEach(card => {
-            if (card.effect === CardEffect.HEAL) {
-                const healAmt = extractHealAmount(card);
-                if (healAmt > 0) {
-                    // Heal applies to the designated defender
-                    if (defender && defender.isAlive) {
-                        defender.health = Math.min(100, defender.health + healAmt);
-                        uiManager.addLogMessage(`✨ ${defender.name}이(가) ${healAmt}의 체력을 회복했습니다!`);
-                    }
-                }
-            } else {
-                totalHealthDamage += card.healthDamage || 0;
-                totalMentalDamage += card.mentalDamage || 0;
-            }
-        });
-
-        // 정신력 소모
-        const mentalCost = this.session.attackCards.reduce(
-            (sum, card) => sum + card.mentalCost, 0
-        );
-        attacker.mentalPower = Math.max(0, attacker.mentalPower - mentalCost);
-
-        // 방어 처리
-        let totalDefense = 0;
-        let hasReflect = false;
-        let hasBounce = false;
-
-        this.session.defenseCards.forEach(card => {
-            if (card.effect === CardEffect.REFLECT) {
-                hasReflect = true;
-            } else if (card.effect === CardEffect.BOUNCE) {
-                hasBounce = true;
-            } else {
-                totalDefense += card.defense;
-            }
-
-            // 정신력 소모 (방어 마법)
-            defender.mentalPower = Math.max(0, defender.mentalPower - card.mentalCost);
-        });
-
-        // 필드 마법: 얼음 왕국 (발동자 방어력 +5)
-        if (this.session.fieldMagic?.name === '얼음 왕국' && 
-            this.session.fieldMagic.casterId === defender.id) {
-            totalDefense += 5;
-        }
-
-        // 되받아치기 - 공격자가 새로운 방어자가 됨
-        if (hasReflect) {
-            uiManager.addLogMessage(`${defender.name}이(가) 공격을 되받아쳤습니다!`);
-            
-            // 공격자와 방어자 교체
-            const originalAttacker = attacker.id;
-            this.session.defenderId = originalAttacker;
-            
-            // 방어 카드 초기화하고 재귀적으로 방어 기회 제공
+        if (!result.resolved) {
+            // Reflect/Bounce - 연쇄 대응
+            this.session.defenderId = result.newDefenderId;
             this.session.defenseCards = [];
             
-            uiManager.addLogMessage(`${attacker.name}이(가) 반격에 대응할 수 있습니다!`);
-            // 여기서 이벤트를 발생시켜야 함 (연쇄 대응을 위해)
+            // 연쇄 대응 이벤트 발행
+            this.eventEmitter.emit('combat:chain-reaction', result.newDefenderId);
             return;
         }
 
-        // 튕기기 - 랜덤한 다른 플레이어가 방어자가 됨
-        if (hasBounce) {
-            const alivePlayers = this.session.players.filter(
-                p => p.isAlive && p.id !== attacker.id && p.id !== defender.id
-            );
-            
-            if (alivePlayers.length > 0) {
-                const randomTarget = alivePlayers[Math.floor(Math.random() * alivePlayers.length)];
-                uiManager.addLogMessage(
-                    `${defender.name}이(가) 공격을 튕겨냈습니다! ${randomTarget.name}이(가) 대상이 됩니다!`
-                );
-                
-                // 새로운 방어자 지정
-                this.session.defenderId = randomTarget.id;
-                
-                // 방어 카드 초기화하고 재귀적으로 방어 기회 제공
-                this.session.defenseCards = [];
-                
-                uiManager.addLogMessage(`${randomTarget.name}이(가) 대응할 수 있습니다!`);
-                // 여기서 이벤트를 발생시켜야 함 (연쇄 대응을 위해)
-                return;
-            }
+        // 전투 종료
+        this.endAttackPhase();
+        
+        // 게임 종료 체크
+        if (this.checkGameEnd()) {
+            return;
         }
 
-        // 방어력 적용
-        const finalHealthDamage = Math.max(0, totalHealthDamage - totalDefense);
-
-        uiManager.addLogMessage(
-            `${attacker.name}의 공격! (${totalHealthDamage} 데미지, 방어 ${totalDefense})`
-        );
-
-        // 데미지 적용
-        this.applyDamage(defender, finalHealthDamage, totalMentalDamage);
-        this.endAttackPhase();
-
-        // 공격/방어 한 사이클이 끝나면 다음 플레이어로 턴을 넘깁니다.
-        // (연쇄 대응이나 반사/튕기기는 위에서 return 처리되어 여기로 오지 않습니다.)
+        // 다음 턴으로
         this.endTurn();
     }
 
-    private applyDamage(player: Player, healthDamage: number, mentalDamage: number): void {
-        player.health = Math.max(0, player.health - healthDamage);
-        player.mentalPower = Math.max(0, player.mentalPower - mentalDamage);
+    private endAttackPhase(): void {
+        const attacker = this.getCurrentPlayer();
+        const defender = this.getDefender();
 
-        if (healthDamage > 0) {
-            uiManager.addLogMessage(
-                `${player.name}이(가) ${healthDamage}의 체력 데미지를 받았습니다!`
-            );
-        }
-        
-        if (mentalDamage > 0) {
-            uiManager.addLogMessage(
-                `${player.name}이(가) ${mentalDamage}의 정신력 데미지를 받았습니다!`
-            );
-        }
-
-        // 정신력 0 체크
-        if (player.mentalPower === 0 && player.isAlive) {
-            this.applyMentalBreakDebuff(player);
-        }
-
-        // 사망 체크
-        if (player.health === 0) {
-            player.isAlive = false;
-            uiManager.addLogMessage(`💀 ${player.name}이(가) 쓰러졌습니다!`);
-            this.checkGameEnd();
-        }
-    }
-
-    private applyMentalBreakDebuff(player: Player): void {
-        const debuffTypes = [
-            DebuffType.CARD_DECAY,
-            DebuffType.RANDOM_TARGET,
-            DebuffType.MENTAL_DRAIN,
-            DebuffType.DAMAGE_INCREASE
-        ];
-
-        const randomDebuff = debuffTypes[Math.floor(Math.random() * debuffTypes.length)];
-        const debuff: Debuff = {
-            type: randomDebuff,
-            duration: -1, // 영구
-            value: randomDebuff === DebuffType.DAMAGE_INCREASE ? 50 : undefined
-        };
-
-        player.debuffs.push(debuff);
-        
-        const debuffNames = {
-            [DebuffType.CARD_DECAY]: '카드 소멸 저주',
-            [DebuffType.RANDOM_TARGET]: '혼돈의 저주',
-            [DebuffType.MENTAL_DRAIN]: '정신력 고갈',
-            [DebuffType.DAMAGE_INCREASE]: '취약 저주'
-        };
-
-        uiManager.addLogMessage(
-            `⚠️ ${player.name}의 정신력이 0이 되었습니다! [${debuffNames[randomDebuff]}] 디버프 적용!`
+        // CombatManager에게 카드 제거 위임
+        this.combatManager.removeUsedCards(
+            attacker,
+            defender,
+            this.session.attackCards,
+            this.session.defenseCards
         );
+
+        // 상태 초기화
+        this.session.attackCards = [];
+        this.session.defenseCards = [];
+        this.session.attackerId = undefined;
+        this.session.defenderId = undefined;
+        
+        this.uiManager.clearCombatNames();
+        
+        // 공격 종료 이벤트 발행
+        this.eventEmitter.emit('attack:end');
     }
+
+    // ===========================================
+    // 디버프 및 특수 효과
+    // ===========================================
 
     private applyDebuffs(player: Player): void {
         player.debuffs.forEach(debuff => {
@@ -404,7 +259,7 @@ export class GameManager {
                     if (player.cards.length > 0) {
                         const randomIndex = Math.floor(Math.random() * player.cards.length);
                         const removedCard = player.cards.splice(randomIndex, 1)[0];
-                        uiManager.addLogMessage(
+                        this.uiManager.addLogMessage(
                             `💀 ${player.name}의 카드 [${removedCard.name}]이(가) 소멸했습니다!`
                         );
                     }
@@ -424,34 +279,36 @@ export class GameManager {
             // 모든 적에게 매 턴 5 데미지
             this.session.players.forEach(player => {
                 if (player.id !== fieldMagic.casterId && player.isAlive) {
-                    this.applyDamage(player, 5, 0);
-                    uiManager.addLogMessage(`🔥 ${player.name}이(가) 화염의 대지에서 5 데미지를 받았습니다!`);
+                    this.combatManager.applyDamage(player, 5, 0);
+                    this.uiManager.addLogMessage(`🔥 ${player.name}이(가) 화염의 대지에서 5 데미지를 받았습니다!`);
                 }
             });
         } else if (fieldMagic.name === '치유의 성역' && caster && caster.isAlive) {
-            // 발동자는 매 턴 체력 10 회복 (절대 최대 HP는 100으로 고정)
+            // 발동자는 매 턴 체력 10 회복
             caster.health = Math.min(100, caster.health + 10);
-            uiManager.addLogMessage(`✨ ${caster.name}이(가) 치유의 성역에서 체력 10을 회복했습니다!`);
+            this.uiManager.addLogMessage(`✨ ${caster.name}이(가) 치유의 성역에서 체력 10을 회복했습니다!`);
         } else if (fieldMagic.name === '얼음 왕국' && caster && caster.isAlive) {
-            // 공격력 감소는 resolveAttack에서 처리
-            uiManager.addLogMessage(`❄️ 얼음 왕국이 모든 적의 공격력을 약화시킵니다!`);
+            this.uiManager.addLogMessage(`❄️ 얼음 왕국이 모든 적의 공격력을 약화시킵니다!`);
         } else if (fieldMagic.name === '마력의 폭풍' && caster && caster.isAlive) {
             // 발동자는 매 턴 정신력 3 회복
             caster.mentalPower = Math.min(caster.maxMentalPower, caster.mentalPower + 3);
-            uiManager.addLogMessage(`⚡ ${caster.name}이(가) 마력의 폭풍에서 정신력 3을 회복했습니다!`);
+            this.uiManager.addLogMessage(`⚡ ${caster.name}이(가) 마력의 폭풍에서 정신력 3을 회복했습니다!`);
         } else if (fieldMagic.name === '혼돈의 소용돌이') {
-            // 공격 대상 랜덤 지정은 showTargetSelection에서 처리
-            uiManager.addLogMessage(`🌀 혼돈의 소용돌이가 전장을 휘감습니다!`);
+            this.uiManager.addLogMessage(`🌀 혼돈의 소용돌이가 전장을 휘감습니다!`);
         }
 
         // 지속 시간 감소
         fieldMagic.duration--;
         if (fieldMagic.duration <= 0) {
-            uiManager.addLogMessage(`필드 마법 [${fieldMagic.name}]의 효과가 끝났습니다!`);
+            this.uiManager.addLogMessage(`필드 마법 [${fieldMagic.name}]의 효과가 끝났습니다!`);
             this.session.fieldMagic = undefined;
-            uiManager.updateFieldMagic(null);
+            this.uiManager.updateFieldMagic(null);
         }
     }
+
+    // ===========================================
+    // 특수 이벤트 (천사/악마)
+    // ===========================================
 
     private triggerSpecialEvent(): void {
         const roll = Math.random();
@@ -471,22 +328,25 @@ export class GameManager {
         const eventRoll = Math.random();
 
         if (eventRoll < 0.33) {
-            this.applyDamage(target, 10, 0);
-            uiManager.addLogMessage(`😈 악마가 나타나 ${target.name}에게 10 데미지!`);
+            this.combatManager.applyDamage(target, 10, 0);
+            this.uiManager.addLogMessage(`😈 악마가 나타나 ${target.name}에게 10 데미지!`);
         } else if (eventRoll < 0.66) {
-            this.applyDamage(target, 20, 0);
-            uiManager.addLogMessage(`😈 악마가 나타나 ${target.name}에게 20 데미지!`);
+            this.combatManager.applyDamage(target, 20, 0);
+            this.uiManager.addLogMessage(`😈 악마가 나타나 ${target.name}에게 20 데미지!`);
         } else if (eventRoll < 0.9) {
-            this.applyDamage(target, 30, 0);
-            uiManager.addLogMessage(`😈 악마가 나타나 ${target.name}에게 30 데미지!`);
+            this.combatManager.applyDamage(target, 30, 0);
+            this.uiManager.addLogMessage(`😈 악마가 나타나 ${target.name}에게 30 데미지!`);
         } else {
             // 카드 2장 삭제
             const cardsToRemove = Math.min(2, target.cards.length);
             for (let i = 0; i < cardsToRemove; i++) {
                 target.cards.pop();
             }
-            uiManager.addLogMessage(`😈 악마가 ${target.name}의 카드 ${cardsToRemove}장을 파괴했습니다!`);
+            this.uiManager.addLogMessage(`😈 악마가 ${target.name}의 카드 ${cardsToRemove}장을 파괴했습니다!`);
         }
+        
+        // 악마 이벤트 발행
+        this.eventEmitter.emit('event:devil', target);
     }
 
     private angelEvent(): void {
@@ -496,78 +356,49 @@ export class GameManager {
         const target = alivePlayers[Math.floor(Math.random() * alivePlayers.length)];
         
         if (Math.random() < 0.5) {
-            // HP cap을 100으로 고정
             target.health = Math.min(100, target.health + 10);
-            uiManager.addLogMessage(`😇 천사가 나타나 ${target.name}의 체력을 10 회복!`);
+            this.uiManager.addLogMessage(`😇 천사가 나타나 ${target.name}의 체력을 10 회복!`);
         } else {
             target.mentalPower = Math.min(target.maxMentalPower, target.mentalPower + 10);
-            uiManager.addLogMessage(`😇 천사가 나타나 ${target.name}의 정신력을 10 회복!`);
+            this.uiManager.addLogMessage(`😇 천사가 나타나 ${target.name}의 정신력을 10 회복!`);
         }
-    }
-
-    private endAttackPhase(): void {
-        // 사용한 카드 제거
-        const attacker = this.getCurrentPlayer();
-        const defender = this.getDefender();
-
-        this.session.attackCards.forEach(card => {
-            const index = attacker.cards.findIndex(c => c.id === card.id);
-            if (index !== -1) {
-                attacker.cards.splice(index, 1);
-            }
-        });
-
-        if (defender) {
-            this.session.defenseCards.forEach(card => {
-                const index = defender.cards.findIndex(c => c.id === card.id);
-                if (index !== -1) {
-                    defender.cards.splice(index, 1);
-                }
-            });
-        }
-
-        // 상태 초기화
-        this.session.attackCards = [];
-        this.session.defenseCards = [];
-        this.session.attackerId = undefined;
-        this.session.defenderId = undefined;
         
-    uiManager.clearCombatNames();
+        // 천사 이벤트 발행
+        this.eventEmitter.emit('event:angel', target);
     }
 
-    public endTurn(): void {
-        // 다음 플레이어로 턴 넘김
-        const currentIndex = this.session.players.findIndex(p => p.id === this.session.currentPlayerId);
-        let nextIndex = (currentIndex + 1) % this.session.players.length;
-        
-        // 살아있는 플레이어 찾기
-        let attempts = 0;
-        while (!this.session.players[nextIndex].isAlive && attempts < 4) {
-            nextIndex = (nextIndex + 1) % this.session.players.length;
-            attempts++;
-        }
+    // ===========================================
+    // 게임 종료
+    // ===========================================
 
-        this.session.currentPlayerId = this.session.players[nextIndex].id;
-        this.session.currentTurn++;
-        this.session.state = GameState.PLAYING;
-
-        this.startTurn();
-    }
-
-    private checkGameEnd(): void {
+    private checkGameEnd(): boolean {
         const alivePlayers = this.session.players.filter(p => p.isAlive);
         
         if (alivePlayers.length === 1) {
             this.session.state = GameState.ENDED;
             const winner = alivePlayers[0];
-            uiManager.addLogMessage(`🏆 ${winner.name}의 승리!`);
-            uiManager.showAlert(`게임 종료! ${winner.name}의 승리!`);
+            this.uiManager.addLogMessage(`🏆 ${winner.name}의 승리!`);
+            this.uiManager.showAlert(`게임 종료! ${winner.name}의 승리!`);
+            
+            // 게임 종료 이벤트 발행
+            this.eventEmitter.emit('game:end', winner);
+            return true;
         } else if (alivePlayers.length === 0) {
             this.session.state = GameState.ENDED;
-            uiManager.addLogMessage('무승부!');
-            uiManager.showAlert('게임 종료! 무승부!');
+            this.uiManager.addLogMessage('무승부!');
+            this.uiManager.showAlert('게임 종료! 무승부!');
+            
+            // 게임 종료 이벤트 발행
+            this.eventEmitter.emit('game:draw');
+            return true;
         }
+        
+        return false;
     }
+
+    // ===========================================
+    // Getters
+    // ===========================================
 
     public getCurrentPlayer(): Player {
         return this.session.players.find(p => p.id === this.session.currentPlayerId)!;
@@ -592,5 +423,9 @@ export class GameManager {
 
     public isLocalPlayerTurn(): boolean {
         return this.session.currentPlayerId === this.localPlayerId;
+    }
+
+    public getEventEmitter(): EventEmitter {
+        return this.eventEmitter;
     }
 }
