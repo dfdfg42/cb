@@ -289,11 +289,87 @@ body {
     border-radius: 8px;
     padding: 8px;
     font-size: 12px;
+    position: relative;
+    overflow: visible;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
 
 .player-info.active {
     border-color: var(--primary-color);
     box-shadow: 0 0 10px var(--primary-color);
+}
+
+.player-info.damage-hit {
+    border-color: rgba(231, 76, 60, 0.9);
+    box-shadow: 0 0 14px rgba(231, 76, 60, 0.6);
+    animation: playerDamagePulse 0.45s ease;
+}
+
+.player-info.active.damage-hit {
+    box-shadow: 0 0 16px rgba(231, 76, 60, 0.65);
+}
+
+.player-damage-float {
+    position: absolute;
+    top: -10px;
+    left: 50%;
+    transform: translate(-50%, 0);
+    padding: 4px 8px;
+    background: linear-gradient(135deg, rgba(231, 76, 60, 0.95), rgba(192, 57, 43, 0.9));
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #fff;
+    pointer-events: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.35);
+    animation: playerDamageFloat 0.8s ease-out forwards;
+    white-space: nowrap;
+}
+
+.player-damage-float .hp-damage {
+    color: #ffe6e6;
+}
+
+.player-damage-float .mp-damage {
+    color: #d6e9ff;
+}
+
+.player-damage-float .damage-separator {
+    opacity: 0.7;
+    font-size: 12px;
+}
+
+@keyframes playerDamagePulse {
+    0% {
+        transform: scale(1);
+    }
+    35% {
+        transform: scale(1.05);
+    }
+    70% {
+        transform: scale(0.97);
+    }
+    100% {
+        transform: scale(1);
+    }
+}
+
+@keyframes playerDamageFloat {
+    0% {
+        opacity: 0;
+        transform: translate(-50%, 4px) scale(0.95);
+    }
+    20% {
+        opacity: 1;
+        transform: translate(-50%, -4px) scale(1.02);
+    }
+    100% {
+        opacity: 0;
+        transform: translate(-50%, -32px) scale(0.9);
+    }
 }
 
 .player-info.dead {
@@ -606,6 +682,56 @@ body {
     text-align: center;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+.card-name.attr-fire {
+    color: #ff8a4b;
+    text-shadow: 0 0 4px rgba(255, 138, 75, 0.35);
+}
+
+.card-name.attr-water {
+    color: #4fa8ff;
+    text-shadow: 0 0 4px rgba(79, 168, 255, 0.35);
+}
+
+.card-name.attr-light {
+    color: #ffe066;
+    text-shadow: 0 0 5px rgba(255, 224, 102, 0.5);
+}
+
+.card-name.attr-dark {
+    color: #b79eff;
+    text-shadow: 0 0 5px rgba(183, 158, 255, 0.5);
+}
+
+.card-name.attr-wind {
+    color: #6ee7ff;
+    text-shadow: 0 0 4px rgba(110, 231, 255, 0.35);
+}
+
+.card-name.attr-earth {
+    color: #d1b679;
+    text-shadow: 0 0 4px rgba(209, 182, 121, 0.35);
+}
+
+.card-name.attr-ice {
+    color: #8ad9ff;
+    text-shadow: 0 0 4px rgba(138, 217, 255, 0.35);
+}
+
+.card-name.attr-lightning {
+    color: #facc15;
+    text-shadow: 0 0 5px rgba(250, 204, 21, 0.45);
+}
+
+.card-name.attr-poison {
+    color: #9ddc5c;
+    text-shadow: 0 0 4px rgba(157, 220, 92, 0.35);
+}
+
+.card-name.attr-generic {
+    color: #9ecbff;
+    text-shadow: 0 0 4px rgba(158, 203, 255, 0.35);
 }
 
 .card-image {

@@ -57,27 +57,47 @@ export class CombatManager {
         // + 접두사 카드 확인
         const plusCards = cards.filter(c => c.plusLevel > 0);
         if (plusCards.length > 0) {
-            const firstPlusCard = plusCards[0];
-            const maxCards = firstPlusCard.plusLevel + 1;
-            
-            // 같은 카드만 선택 가능
-            const allSameCard = plusCards.every(c => c.name === firstPlusCard.name);
-            if (!allSameCard) {
-                this.uiManager.showAlert('+ 접두사 카드는 같은 종류만 함께 사용 가능합니다!');
-                return false;
-            }
-            
-            if (plusCards.length > maxCards) {
-                this.uiManager.showAlert(`이 카드는 최대 ${maxCards}장까지 사용 가능합니다!`);
-                return false;
+            const usageMap = new Map<string, { count: number; limit: number }>();
+
+            for (const card of plusCards) {
+                const key = card.name;
+                const limit = card.plusLevel + 1;
+                const entry = usageMap.get(key);
+
+                if (entry) {
+                    const effectiveLimit = Math.max(entry.limit, limit);
+                    const nextCount = entry.count + 1;
+                    if (nextCount > effectiveLimit) {
+                        this.uiManager.showAlert(`${card.name} 카드는 최대 ${effectiveLimit}장까지 사용 가능합니다!`);
+                        return false;
+                    }
+
+                    usageMap.set(key, { count: nextCount, limit: effectiveLimit });
+                } else {
+                    if (limit <= 0) {
+                        this.uiManager.showAlert(`${card.name} 카드는 현재 사용할 수 없습니다!`);
+                        return false;
+                    }
+
+                    usageMap.set(key, { count: 1, limit });
+                }
             }
         }
 
         // 일반 공격 카드 + 다른 카드 혼합 불가
         const normalAttacks = cards.filter(c => c.type === CardType.ATTACK && c.plusLevel === 0);
-        if (normalAttacks.length > 0 && cards.length > 1) {
+        // 일반 공격은 한 번에 여러 장 사용할 수 없음
+        if (normalAttacks.length > 1) {
             this.uiManager.showAlert('일반 공격 카드는 1장만 사용 가능합니다!');
             return false;
+        }
+        if (normalAttacks.length === 1 && cards.length > 1) {
+            const others = cards.filter(c => c.id !== normalAttacks[0].id);
+            const allOthersArePlus = others.every(c => c.plusLevel > 0);
+            if (!allOthersArePlus) {
+                this.uiManager.showAlert('일반 공격 카드는 1장만 사용 가능합니다!');
+                return false;
+            }
         }
 
         return true;

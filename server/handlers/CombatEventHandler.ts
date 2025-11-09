@@ -222,6 +222,12 @@ export class CombatEventHandler {
      * Process next attack in queue (send defend-request)
      */
     private processNextAttack(room: Room, attackItem: AttackQueueItem): void {
+        // Ensure server turn tracker aligns with the upcoming attacker (important for reflect chains)
+        const attackerIndex = room.players.findIndex(p => p.id === attackItem.attackerId);
+        if (attackerIndex !== -1) {
+            room.currentPlayerIndex = attackerIndex;
+        }
+
         // Broadcast announcement so UI can show center info for everyone
         this.io.to(room.id).emit(SocketEvents.ATTACK_ANNOUNCED, {
             requestId: attackItem.requestId,

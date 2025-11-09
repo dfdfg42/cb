@@ -23,13 +23,21 @@ export class CardComponent {
         statsDiv.className = 'card-stats';
         
         const stats: string[] = [];
-        if (this.card.healthDamage > 0) {
+        const prefix = this.card.plusLevel > 0 ? '+' : '';
+        const showMagicDamageAsMental =
+            this.card.type === CardType.MAGIC &&
+            this.card.healthDamage > 0 &&
+            this.card.mentalDamage === 0;
+
+        if (showMagicDamageAsMental) {
+            stats.push(`🧠${prefix}${this.card.healthDamage}`);
+        } else if (this.card.healthDamage > 0) {
             // plusLevel이 있으면 공격력 앞에 + 표시
-            const prefix = this.card.plusLevel > 0 ? '+' : '';
             stats.push(`⚔️${prefix}${this.card.healthDamage}`);
         }
+
         if (this.card.mentalDamage > 0) {
-            stats.push(`🧠${this.card.mentalDamage}`);
+            stats.push(`🧠${prefix}${this.card.mentalDamage}`);
         }
         if (this.card.defense > 0) {
             stats.push(`🛡️${this.card.defense}`);
@@ -44,6 +52,7 @@ export class CardComponent {
         const nameDiv = document.createElement('div');
         nameDiv.className = 'card-name';
         nameDiv.textContent = this.card.name;
+    this.applyAttributeColor(nameDiv);
 
         // 카드 이미지 (임시)
         const imageDiv = document.createElement('div');
@@ -162,13 +171,25 @@ export class CardComponent {
         const descEl = modal.querySelector('.card-detail-description');
         const imageEl = modal.querySelector('.card-detail-image');
 
-        if (nameEl) nameEl.textContent = this.card.name;
+        if (nameEl instanceof HTMLElement) {
+            nameEl.textContent = this.card.name;
+            this.applyAttributeColor(nameEl);
+        } else if (nameEl) {
+            nameEl.textContent = this.card.name;
+        }
         if (descEl) descEl.textContent = this.card.description;
         if (imageEl) imageEl.innerHTML = this.getCardIcon();
         
         if (statsEl) {
             const statsText: string[] = [];
-            if (this.card.healthDamage > 0) {
+            const showMagicDamageAsMental =
+                this.card.type === CardType.MAGIC &&
+                this.card.healthDamage > 0 &&
+                this.card.mentalDamage === 0;
+
+            if (showMagicDamageAsMental) {
+                statsText.push(`정신 공격력: ${this.card.healthDamage}`);
+            } else if (this.card.healthDamage > 0) {
                 statsText.push(`체력 공격력: ${this.card.healthDamage}`);
             }
             if (this.card.mentalDamage > 0) {
@@ -191,6 +212,106 @@ export class CardComponent {
 
     public destroy(): void {
         this.element.remove();
+    }
+
+    private applyAttributeColor(target: HTMLElement): void {
+        const attrClass = this.getAttributeClass(this.card.attribute);
+        const classesToRemove = Array.from(target.classList).filter(cls => cls.startsWith('attr-'));
+        classesToRemove.forEach(cls => target.classList.remove(cls));
+
+        if (attrClass) {
+            target.classList.add(attrClass);
+        }
+    }
+
+    private getAttributeClass(attribute?: string | null): string | null {
+        if (!attribute) {
+            return null;
+        }
+
+        const normalized = this.normalizeAttribute(attribute);
+        if (!normalized || normalized === 'none') {
+            return null;
+        }
+
+        switch (normalized) {
+            case 'fire':
+                return 'attr-fire';
+            case 'water':
+                return 'attr-water';
+            case 'light':
+                return 'attr-light';
+            case 'dark':
+                return 'attr-dark';
+            case 'wind':
+                return 'attr-wind';
+            case 'earth':
+                return 'attr-earth';
+            case 'ice':
+                return 'attr-ice';
+            case 'lightning':
+                return 'attr-lightning';
+            case 'poison':
+                return 'attr-poison';
+            default:
+                return 'attr-generic';
+        }
+    }
+
+    private normalizeAttribute(attribute?: string | null): string | null {
+        if (!attribute) {
+            return null;
+        }
+
+        const value = attribute.trim().toLowerCase();
+        if (!value) {
+            return null;
+        }
+
+        const mapping: Record<string, string> = {
+            fire: 'fire',
+            '화염': 'fire',
+            '불': 'fire',
+            '불꽃': 'fire',
+            water: 'water',
+            '물': 'water',
+            '물속성': 'water',
+            light: 'light',
+            '빛': 'light',
+            holy: 'light',
+            '성속성': 'light',
+            dark: 'dark',
+            darkness: 'dark',
+            shadow: 'dark',
+            '암흑': 'dark',
+            '어둠': 'dark',
+            wind: 'wind',
+            air: 'wind',
+            '바람': 'wind',
+            '풍': 'wind',
+            earth: 'earth',
+            ground: 'earth',
+            stone: 'earth',
+            '대지': 'earth',
+            '땅': 'earth',
+            ice: 'ice',
+            frost: 'ice',
+            '얼음': 'ice',
+            '빙결': 'ice',
+            lightning: 'lightning',
+            thunder: 'lightning',
+            electric: 'lightning',
+            '전기': 'lightning',
+            '번개': 'lightning',
+            poison: 'poison',
+            toxic: 'poison',
+            venom: 'poison',
+            '독': 'poison',
+            none: 'none',
+            '없음': 'none'
+        };
+
+        return mapping[value] ?? value;
     }
 }
 

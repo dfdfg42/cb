@@ -19,6 +19,7 @@ class Game {
     private isMultiplayer: boolean = false;
     private pendingDefenseRequestId?: string | null = null;
     private pendingJoinMode: 'normal' | 'ranked' | null = null;
+    private combatClearTimer: number | null = null;
     
     constructor() {
         this.playersManager = new PlayersManager();
@@ -198,6 +199,25 @@ class Game {
                 soundManager.playClick();
                 uiManager.showScreen(Screen.LOBBY);
             });
+        }
+    }
+
+    private scheduleCombatUIClear(delayMs: number): void {
+        if (!this.combatUI) return;
+        if (this.combatClearTimer) {
+            window.clearTimeout(this.combatClearTimer);
+        }
+
+        this.combatClearTimer = window.setTimeout(() => {
+            this.combatClearTimer = null;
+            this.combatUI?.clearCombat();
+        }, delayMs);
+    }
+
+    private cancelCombatUIClear(): void {
+        if (this.combatClearTimer) {
+            window.clearTimeout(this.combatClearTimer);
+            this.combatClearTimer = null;
         }
     }
     
@@ -470,9 +490,15 @@ class Game {
                     } else {
                         this.combatUI.showSummary(attackerName, defenderName, usedCards, damageApplied, appliedDebuffs);
                     }
-                    setTimeout(() => this.combatUI!.clearCombat(), 1200);
+
+                    const shouldHoldSummary = Boolean(resolved.isReflected || resolved.isBounced);
+                    if (shouldHoldSummary) {
+                        this.cancelCombatUIClear();
+                    } else {
+                        this.scheduleCombatUIClear(1600);
+                    }
                 } catch (e) {
-                    setTimeout(() => this.combatUI!.clearCombat(), 1200);
+                    this.scheduleCombatUIClear(1600);
                 }
             }
             // 손패 입력 재활성화 (로컬 플레이어의 턴인 경우)
@@ -491,6 +517,7 @@ class Game {
 
         // attack announced: show central info (attribute + damage)
         socketClient.setOnAttackAnnounced((data: any) => {
+            this.cancelCombatUIClear();
             const attrEl = document.getElementById('defend-attribute');
             const dmgEl = document.getElementById('defend-damage');
             if (attrEl) attrEl.textContent = `속성: ${data.attackAttribute || '-'} `;
@@ -779,6 +806,7 @@ class Game {
             const session = this.gameManager.getSession();
             session.currentPlayerId = data.currentPlayerId;
             session.currentTurn = data.currentTurn;
+            this.gameManager.resetNormalAttackUsage();
             
             const currentPlayer = this.gameManager.getPlayerById(data.currentPlayerId);
             if (currentPlayer) {
@@ -1320,12 +1348,8 @@ class Game {
                     if (newDefender) {
                         uiManager.addLogMessage(`${newDefender.name}의 대응 턴!`);
 
-                        // Combat UI 초기화
-                        if (this.combatUI) {
-                            setTimeout(() => {
-                                this.combatUI!.clearCombat();
-                            }, 1000);
-                        }
+                // 이전 요약을 유지해 플레이어가 되받아치기 상황을 확인할 수 있도록 클리어 예약 취소
+                this.cancelCombatUIClear();
 
                         // hide defend modal if open and clear pending id
                         const dm = document.getElementById('defend-modal');
@@ -1348,11 +1372,7 @@ class Game {
                 this.updateGameState();
 
                 // Combat UI 초기화
-                if (this.combatUI) {
-                    setTimeout(() => {
-                        this.combatUI!.clearCombat();
-                    }, 1500);
-                }
+                this.scheduleCombatUIClear(1500);
 
                 // 손패 업데이트 및 확인 버튼 복원
                 const localPlayer = this.gameManager!.getLocalPlayer();
@@ -1425,12 +1445,8 @@ class Game {
                     if (newDefender) {
                         uiManager.addLogMessage(`${newDefender.name}의 대응 턴!`);
 
-                        // Combat UI 초기화
-                        if (this.combatUI) {
-                            setTimeout(() => {
-                                this.combatUI!.clearCombat();
-                            }, 1000);
-                        }
+                        // 이전 요약을 유지해 플레이어가 되받아치기 상황을 확인할 수 있도록 클리어 예약 취소
+                        this.cancelCombatUIClear();
 
                         // 새로운 방어자가 로컬 플레이어인지 확인
                         setTimeout(() => {
@@ -1448,11 +1464,7 @@ class Game {
                 this.updateGameState();
 
                 // Combat UI 초기화
-                if (this.combatUI) {
-                    setTimeout(() => {
-                        this.combatUI!.clearCombat();
-                    }, 1500);
-                }
+                this.scheduleCombatUIClear(1500);
 
                 // 손패 업데이트
                 const localPlayer = this.gameManager!.getLocalPlayer();

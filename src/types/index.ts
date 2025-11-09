@@ -26,6 +26,7 @@ export interface Card {
     mentalDamage: number;      // 정신 공격력
     defense: number;           // 방어력
     mentalCost: number;        // 정신력 소모량 (마법 카드)
+    attribute?: string;        // 속성 (없음인 경우 생략)
     plusLevel: number;         // + 접두사 레벨 (0이면 없음)
     effect: CardEffect;
     description: string;
@@ -100,6 +101,8 @@ export interface GameSession {
     fieldMagic?: FieldMagic;
     state: GameState;
     deck: Card[];
+    // 플레이어별로 해당 턴에 일반(플러스 없는) 공격카드를 사용했는지 추적
+    normalAttackUsedBy?: string[];
 }
 
 // 이벤트 타입

@@ -77,6 +77,7 @@ describe('CombatManager', () => {
 
       const result = combatManager.selectAttackCards(cards, player);
       expect(result).toBe(true);
+      expect(mockUIManager.showAlert).not.toHaveBeenCalled();
     });
 
     it('should reject insufficient mental power', () => {
@@ -109,6 +110,51 @@ describe('CombatManager', () => {
       const result = combatManager.selectAttackCards(cards, player);
       expect(result).toBe(false);
       expect(mockUIManager.showAlert).toHaveBeenCalledWith('정신력이 부족합니다!');
+    });
+
+    it('should allow mixing different plus cards within limits', () => {
+      const player: Player = {
+        id: '1',
+        name: 'Player1',
+        health: 100,
+        maxHealth: 100,
+        mentalPower: 100,
+        maxMentalPower: 100,
+        cards: [],
+        isAlive: true,
+        isReady: true,
+        debuffs: []
+      };
+
+      const cards: Card[] = [
+        {
+          id: 'atk_plus_1',
+          name: '+검격',
+          type: CardType.ATTACK,
+          mentalCost: 0,
+          plusLevel: 1,
+          defense: 0,
+          healthDamage: 5,
+          mentalDamage: 0,
+          effect: CardEffect.NONE,
+          description: ''
+        },
+        {
+          id: 'atk_plus_2',
+          name: '+화염구',
+          type: CardType.ATTACK,
+          mentalCost: 0,
+          plusLevel: 1,
+          defense: 0,
+          healthDamage: 6,
+          mentalDamage: 0,
+          effect: CardEffect.NONE,
+          description: ''
+        }
+      ];
+
+      const result = combatManager.selectAttackCards(cards, player);
+      expect(result).toBe(true);
     });
   });
 

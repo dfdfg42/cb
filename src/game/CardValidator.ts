@@ -50,8 +50,18 @@ export class CardValidator {
 
         // 일반 공격 카드 + 다른 카드 혼합 불가
         const normalAttacks = cards.filter(c => c.type === CardType.ATTACK && c.plusLevel === 0);
-        if (normalAttacks.length > 0 && cards.length > 1) {
+        // 일반 공격 카드는 한 번에 여러 장 사용할 수 없음
+        if (normalAttacks.length > 1) {
             return { valid: false, error: '일반 공격 카드는 1장만 사용 가능합니다!' };
+        }
+        // 일반 공격 1장 선택 시, 다른 카드가 있다면 반드시 + 접두사 카드만 허용
+        if (normalAttacks.length === 1 && cards.length > 1) {
+            const others = cards.filter(c => c.id !== normalAttacks[0].id);
+            const allOthersArePlus = others.every(c => c.plusLevel > 0);
+            if (!allOthersArePlus) {
+                return { valid: false, error: '일반 공격 카드는 1장만 사용 가능합니다!' };
+            }
+            // plus 카드 규칙은 validatePlusCards에서 확인되므로 여기서는 통과시킴
         }
 
         return { valid: true };
@@ -69,23 +79,32 @@ export class CardValidator {
             return { valid: true };
         }
 
-        const firstPlusCard = plusCards[0];
-        const maxCards = firstPlusCard.plusLevel + 1;
-        
-        // 같은 카드만 선택 가능
-        const allSameCard = plusCards.every(c => c.name === firstPlusCard.name);
-        if (!allSameCard) {
-            return { 
-                valid: false, 
-                error: '+ 접두사 카드는 같은 종류만 함께 사용 가능합니다!' 
-            };
-        }
-        
-        if (plusCards.length > maxCards) {
-            return { 
-                valid: false, 
-                error: `이 카드는 최대 ${maxCards}장까지 사용 가능합니다!` 
-            };
+        const usageMap = new Map<string, { count: number; limit: number }>();
+
+        for (const card of plusCards) {
+            const key = card.name;
+            const limit = card.plusLevel + 1;
+            const entry = usageMap.get(key);
+
+            if (entry) {
+                const effectiveLimit = Math.max(entry.limit, limit);
+                const nextCount = entry.count + 1;
+                if (nextCount > effectiveLimit) {
+                    return {
+                        valid: false,
+                        error: `${card.name} 카드는 최대 ${effectiveLimit}장까지 사용 가능합니다!`
+                    };
+                }
+                usageMap.set(key, { count: nextCount, limit: effectiveLimit });
+            } else {
+                if (limit <= 0) {
+                    return {
+                        valid: false,
+                        error: `${card.name} 카드는 현재 사용할 수 없습니다!`
+                    };
+                }
+                usageMap.set(key, { count: 1, limit });
+            }
         }
 
         return { valid: true };

@@ -90,8 +90,20 @@ export class CombatUI {
         const damage = resolved.damageApplied || 0;
         const mentalDamage = resolved.mentalDamageApplied || 0;
         const heal = resolved.healApplied || 0;
+        const isReflect = Boolean(resolved.isReflected);
+        const isBounce = Boolean(resolved.isBounced);
+        const originalHealthDamage = resolved.originalDamage ?? damage;
+        const originalMentalDamage = resolved.originalMentalDamage ?? mentalDamage;
 
-        if (this.summaryPlayersEl) this.summaryPlayersEl.textContent = `${attackerName} → ${defenderName}`;
+        if (this.summaryPlayersEl) {
+            if (isReflect) {
+                this.summaryPlayersEl.textContent = `${defenderName} ↺ ${attackerName}`;
+            } else if (isBounce && resolved?.redirectTargetName) {
+                this.summaryPlayersEl.textContent = `${defenderName} 🌀 ${resolved.redirectTargetName}`;
+            } else {
+                this.summaryPlayersEl.textContent = `${attackerName} → ${defenderName}`;
+            }
+        }
 
         if (this.summaryCardsEl) {
             const atkList = (cards && cards.length > 0) ? cards.map((c: any) => c.name).join(', ') : '-';
@@ -100,10 +112,24 @@ export class CombatUI {
         }
 
         if (this.summaryDamageEl) {
-            let dmgText = `${damage} 체력 데미지`;
-            if (mentalDamage > 0) dmgText += ` • ${mentalDamage} 정신 데미지`;
-            if (heal > 0) dmgText += ` • +${heal} HP 회복`;
-            this.summaryDamageEl.textContent = dmgText;
+            if (isReflect) {
+                let dmgText = `반사: ${originalHealthDamage} 체력`;
+                if (originalMentalDamage > 0) {
+                    dmgText += ` • ${originalMentalDamage} 정신`;
+                }
+                this.summaryDamageEl.textContent = dmgText;
+            } else if (isBounce) {
+                let dmgText = `튕김: ${originalHealthDamage} 체력`;
+                if (originalMentalDamage > 0) {
+                    dmgText += ` • ${originalMentalDamage} 정신`;
+                }
+                this.summaryDamageEl.textContent = dmgText;
+            } else {
+                let dmgText = `${damage} 체력 데미지`;
+                if (mentalDamage > 0) dmgText += ` • ${mentalDamage} 정신 데미지`;
+                if (heal > 0) dmgText += ` • +${heal} HP 회복`;
+                this.summaryDamageEl.textContent = dmgText;
+            }
         }
 
         // show debuffs / special tags

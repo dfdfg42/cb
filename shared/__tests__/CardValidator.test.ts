@@ -146,7 +146,7 @@ describe('CardValidator', () => {
       expect(result.valid).toBe(true);
     });
 
-    it('should reject different plus cards combined', () => {
+    it('should allow combining different plus cards', () => {
       const cards = [
         {
           id: '1',
@@ -166,8 +166,7 @@ describe('CardValidator', () => {
         }
       ];
       const result = CardValidator.validatePlusCards(cards);
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain('같은 종류만');
+      expect(result.valid).toBe(true);
     });
 
     it('should reject exceeding max plus card count', () => {
@@ -200,6 +199,53 @@ describe('CardValidator', () => {
       const result = CardValidator.validatePlusCards(cards);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('최대');
+    });
+
+    it('should enforce individual limits when mixing plus cards', () => {
+      const cards = [
+        {
+          id: '1',
+          name: '+검격',
+          type: 'ATTACK',
+          mentalCost: 10,
+          plusLevel: 1,
+          healthDamage: 20
+        },
+        {
+          id: '2',
+          name: '+검격',
+          type: 'ATTACK',
+          mentalCost: 10,
+          plusLevel: 1,
+          healthDamage: 20
+        },
+        {
+          id: '3',
+          name: '+화염구',
+          type: 'ATTACK',
+          mentalCost: 15,
+          plusLevel: 2,
+          healthDamage: 25
+        },
+        {
+          id: '4',
+          name: '+화염구',
+          type: 'ATTACK',
+          mentalCost: 15,
+          plusLevel: 2,
+          healthDamage: 25
+        },
+        {
+          id: '5',
+          name: '+화염구',
+          type: 'ATTACK',
+          mentalCost: 15,
+          plusLevel: 2,
+          healthDamage: 25
+        }
+      ];
+      const result = CardValidator.validatePlusCards(cards);
+      expect(result.valid).toBe(true);
     });
   });
 

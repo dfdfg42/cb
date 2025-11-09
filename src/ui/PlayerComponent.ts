@@ -4,6 +4,7 @@ export class PlayerInfoComponent {
     private player: Player;
     private element: HTMLElement;
     private index: number;
+    private damageTimeout?: number;
 
     constructor(player: Player, index: number) {
         this.player = player;
@@ -26,6 +27,61 @@ export class PlayerInfoComponent {
     public updatePlayer(player: Player): void {
         this.player = player;
         this.render();
+    }
+
+    public playDamageEffect(healthDamage: number, mentalDamage: number): void {
+        if (healthDamage <= 0 && mentalDamage <= 0) {
+            return;
+        }
+
+        // Remove any existing floating labels to avoid stacking
+        this.element.querySelectorAll('.player-damage-float').forEach(node => node.remove());
+
+        // Force reflow so repeated hits restart the animation
+        this.element.classList.remove('damage-hit');
+        void this.element.offsetWidth;
+        this.element.classList.add('damage-hit');
+
+        const label = document.createElement('div');
+        label.className = 'player-damage-float';
+
+        const segments: HTMLElement[] = [];
+        if (healthDamage > 0) {
+            const hpSpan = document.createElement('span');
+            hpSpan.className = 'hp-damage';
+            hpSpan.textContent = `-${healthDamage} HP`;
+            segments.push(hpSpan);
+        }
+        if (mentalDamage > 0) {
+            const mpSpan = document.createElement('span');
+            mpSpan.className = 'mp-damage';
+            mpSpan.textContent = `-${mentalDamage} MP`;
+            segments.push(mpSpan);
+        }
+
+        segments.forEach((segment, idx) => {
+            if (idx > 0) {
+                const divider = document.createElement('span');
+                divider.className = 'damage-separator';
+                divider.textContent = '•';
+                label.appendChild(divider);
+            }
+            label.appendChild(segment);
+        });
+
+        this.element.appendChild(label);
+
+        label.addEventListener('animationend', () => {
+            label.remove();
+        }, { once: true });
+
+        if (this.damageTimeout) {
+            window.clearTimeout(this.damageTimeout);
+        }
+        this.damageTimeout = window.setTimeout(() => {
+            this.element.classList.remove('damage-hit');
+            this.damageTimeout = undefined;
+        }, 600);
     }
 
     public setActive(isActive: boolean): void {
@@ -85,6 +141,7 @@ export class PlayerInfoComponent {
 export class PlayersManager {
     private playerComponents: Map<string, PlayerInfoComponent> = new Map();
     private players: Player[] = [];
+    private snapshots: Map<string, { health: number; mental: number }> = new Map();
 
     constructor() {}
 
@@ -97,11 +154,10 @@ export class PlayersManager {
         const index = this.players.findIndex(p => p.id === player.id);
         if (index !== -1) {
             this.players[index] = player;
-            const component = this.playerComponents.get(player.id);
-            if (component) {
-                component.updatePlayer(player);
-            }
+        } else {
+            this.players.push(player);
         }
+        this.applyPlayerState(player, true);
     }
 
     public setActivePlayer(playerId: string): void {
@@ -113,11 +169,16 @@ export class PlayersManager {
     private renderAll(): void {
         // 기존 컴포넌트 제거
         this.playerComponents.clear();
+        this.snapshots.clear();
 
         // 새로운 컴포넌트 생성
         this.players.forEach((player, index) => {
             const component = new PlayerInfoComponent(player, index);
             this.playerComponents.set(player.id, component);
+            this.snapshots.set(player.id, {
+                health: player.health,
+                mental: player.mentalPower
+            });
         });
     }
 
@@ -129,18 +190,17 @@ export class PlayersManager {
         return this.players.filter(p => p.isAlive);
     }
 
-    public refreshAll(): void {
+    public refreshAll(options: { triggerEffects?: boolean } = {}): void {
+        const triggerEffects = options.triggerEffects ?? true;
         this.players.forEach(player => {
-            const component = this.playerComponents.get(player.id);
-            if (component) {
-                component.updatePlayer(player);
-            }
+            this.applyPlayerState(player, triggerEffects);
         });
     }
 
     public clear(): void {
         this.players = [];
         this.playerComponents.clear();
+        this.snapshots.clear();
         
         // UI 초기화
         for (let i = 0; i < 4; i++) {
@@ -150,5 +210,34 @@ export class PlayersManager {
                 container.classList.remove('active', 'dead');
             }
         }
+    }
+
+    private applyPlayerState(player: Player, triggerEffects: boolean): void {
+        let component = this.playerComponents.get(player.id);
+        if (!component) {
+            const index = this.players.findIndex(p => p.id === player.id);
+            component = new PlayerInfoComponent(player, index === -1 ? this.playerComponents.size : index);
+            this.playerComponents.set(player.id, component);
+        }
+
+        const snapshot = this.snapshots.get(player.id) || {
+            health: player.health,
+            mental: player.mentalPower
+        };
+
+        component.updatePlayer(player);
+
+        if (triggerEffects) {
+            const healthDamage = Math.max(0, snapshot.health - player.health);
+            const mentalDamage = Math.max(0, snapshot.mental - player.mentalPower);
+            if (healthDamage > 0 || mentalDamage > 0) {
+                component.playDamageEffect(healthDamage, mentalDamage);
+            }
+        }
+
+        this.snapshots.set(player.id, {
+            health: player.health,
+            mental: player.mentalPower
+        });
     }
 }

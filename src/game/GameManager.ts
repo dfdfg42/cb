@@ -1,4 +1,4 @@
-import { GameSession, GameState, GameType, Player, Card, DebuffType } from '../types';
+import { GameSession, GameState, GameType, Player, Card, DebuffType, CardType } from '../types';
 import { IUIManager } from '../ui/IUIManager';
 import { createShuffledDeck } from '../data/cards';
 import { CombatManager } from './CombatManager';
@@ -32,7 +32,8 @@ export class GameManager {
             attackCards: [],
             defenseCards: [],
             state: GameState.STARTING,
-            deck: createShuffledDeck()
+            deck: createShuffledDeck(),
+            normalAttackUsedBy: []
         };
 
         this.initializeGame();
@@ -93,6 +94,9 @@ export class GameManager {
         this.uiManager.updateTurnNumber(this.session.currentTurn);
         console.log(`턴 ${this.session.currentTurn}: ${currentPlayer.name}의 차례`);
         
+    // 매 턴 시작 시 일반 공격 사용 기록 초기화
+    this.resetNormalAttackUsage();
+
         // 턴 시작 이벤트 발행
         this.eventEmitter.emit('turn:start', currentPlayer, this.session.currentTurn);
     }
@@ -138,6 +142,18 @@ export class GameManager {
         if (!validation.valid) {
             this.uiManager.showAlert(validation.error!);
             return false;
+        }
+
+        // 일반(플러스 없는) 공격 카드는 한 턴에 한 번만 사용 가능
+        const normalAttackSelected = cards.some(c => c.type === CardType.ATTACK && c.plusLevel === 0);
+        if (normalAttackSelected) {
+            this.session.normalAttackUsedBy = this.session.normalAttackUsedBy || [];
+            if (this.session.normalAttackUsedBy.includes(currentPlayer.id)) {
+                this.uiManager.showAlert('이미 이 턴에 일반 공격 카드를 사용했습니다!');
+                return false;
+            }
+            // 기록에 추가
+            this.session.normalAttackUsedBy.push(currentPlayer.id);
         }
 
         this.session.attackCards = cards;
@@ -411,6 +427,10 @@ export class GameManager {
 
     public getSession(): GameSession {
         return this.session;
+    }
+
+    public resetNormalAttackUsage(): void {
+        this.session.normalAttackUsedBy = [];
     }
 
     public getLocalPlayer(): Player {
