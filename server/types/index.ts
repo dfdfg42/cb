@@ -18,6 +18,7 @@ export interface AttackQueueItem {
     chainDepth: number;
     parentAttackId?: string;
     chainSource?: 'reflect' | 'bounce';
+    originalTurnIndex?: number; // Preserve the turn index from initial attack
     status: 'pending' | 'defending' | 'resolved';
     timeoutId?: NodeJS.Timeout;
     timestamp: number;

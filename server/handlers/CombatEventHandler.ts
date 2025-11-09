@@ -142,6 +142,7 @@ export class CombatEventHandler {
             cardsUsedIds: pendingCards.map((c: Card) => c && c.id).filter(Boolean),
             attackAttribute,
             chainDepth: 0,  // Initial attack has depth 0
+            originalTurnIndex: room.currentPlayerIndex ?? 0, // Store original turn index
             status: 'pending',
             timestamp: Date.now(),
             roomId: data.roomId
@@ -222,10 +223,13 @@ export class CombatEventHandler {
      * Process next attack in queue (send defend-request)
      */
     private processNextAttack(room: Room, attackItem: AttackQueueItem): void {
-        // Ensure server turn tracker aligns with the upcoming attacker (important for reflect chains)
-        const attackerIndex = room.players.findIndex(p => p.id === attackItem.attackerId);
-        if (attackerIndex !== -1) {
-            room.currentPlayerIndex = attackerIndex;
+        // ONLY update turn tracker for initial attacks (chainDepth === 0)
+        // For reflect/bounce chains, preserve the original turn order
+        if (attackItem.chainDepth === 0) {
+            const attackerIndex = room.players.findIndex(p => p.id === attackItem.attackerId);
+            if (attackerIndex !== -1) {
+                room.currentPlayerIndex = attackerIndex;
+            }
         }
 
         // Broadcast announcement so UI can show center info for everyone
@@ -544,11 +548,15 @@ export class CombatEventHandler {
         room.attackQueue!.removeAttack(attackItem.id);
 
         // Advance turn
-        const currentIndex = room.currentPlayerIndex ?? 0;
-        const nextIndex = (currentIndex + 1) % room.players.length;
+        // For chain attacks (reflect/bounce), use the ORIGINAL turn index preserved at chain start
+        // For initial attacks, use current turn index
+        const turnIndex = attackItem.originalTurnIndex ?? room.currentPlayerIndex ?? 0;
+        const nextIndex = (turnIndex + 1) % room.players.length;
         room.currentPlayerIndex = nextIndex;
         room.currentTurn = (room.currentTurn || 1) + (nextIndex === 0 ? 1 : 0);
         const nextPlayerId = room.players[nextIndex].id;
+        
+        console.log(`[Turn Advance] Original turn: ${turnIndex}, Next turn: ${nextIndex} (${nextPlayerId}), Chain depth: ${attackItem.chainDepth}`);
 
         // Build resolved payload
         const resolved = {
