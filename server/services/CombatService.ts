@@ -150,6 +150,7 @@ export class CombatService {
             cardsUsedIds: [],
             attackAttribute: null,
             chainDepth: originalAttack.chainDepth + 1,
+            originalTurnIndex: originalAttack.originalTurnIndex, // Preserve original turn
             parentAttackId: originalAttack.id,
             chainSource: 'reflect',
             status: 'pending',
@@ -183,6 +184,7 @@ export class CombatService {
             cardsUsedIds: [],
             attackAttribute: null,
             chainDepth: originalAttack.chainDepth + 1,
+            originalTurnIndex: originalAttack.originalTurnIndex, // Preserve original turn
             parentAttackId: originalAttack.id,
             chainSource: 'bounce',
             status: 'pending',
@@ -214,6 +216,7 @@ export class CombatService {
             cardsUsedIds: [],
             attackAttribute: null,
             chainDepth: originalAttack.chainDepth + 1,
+            originalTurnIndex: originalAttack.originalTurnIndex, // Preserve original turn
             parentAttackId: originalAttack.id,
             chainSource: 'reflect',
             status: 'pending',
