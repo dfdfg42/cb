@@ -57,6 +57,7 @@ export interface PlayerState {
     mentalPower: number;
     alive: boolean;
     debuffs?: string[];
+    drawCost: number; // Cost for drawing a card (increases each time: 5, 10, 15...)
 }
 
 export interface Room {
@@ -92,6 +93,24 @@ export interface DefendRequest {
     defenderId: string;
     cards: Card[];
     defense?: number;
+}
+
+export interface DrawCardEvent {
+    roomId: string;
+    playerId: string;
+}
+
+export interface DrawCardResult {
+    success: boolean;
+    playerId: string;
+    playerName: string;
+    cardDrawn?: Card;
+    costPaid: number;
+    newDrawCost: number;
+    remainingMentalPower: number;
+    nextPlayerId: string;
+    currentTurn: number;
+    message?: string;
 }
 
 export interface AttackResult {

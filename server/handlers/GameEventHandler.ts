@@ -12,9 +12,10 @@ import {
     PlayerStateUpdateEvent,
     GameOverEvent,
     ForceSetHealthEvent,
+    PlayerDrawCardEvent,
     SocketEvents
 } from '../types/events';
-import { Player } from '../types';
+import { Player, Card, DrawCardResult } from '../types';
 
 /**
  * Game Event Handler
@@ -162,7 +163,8 @@ export class GameEventHandler {
         room.playerStates[data.playerId] = room.playerStates[data.playerId] || { 
             health: 100, 
             mentalPower: 100, 
-            alive: true 
+            alive: true,
+            drawCost: 5
         };
         room.playerStates[data.playerId].health = Math.max(0, Math.min(100, data.health));
         
@@ -206,5 +208,103 @@ export class GameEventHandler {
         socket.on(SocketEvents.FORCE_SET_HEALTH, (data: ForceSetHealthEvent) => {
             this.handleForceSetHealth(socket, data);
         });
+
+        socket.on(SocketEvents.PLAYER_DRAW_CARD, (data: PlayerDrawCardEvent) => {
+            this.handlePlayerDrawCard(socket, data);
+        });
+    }
+
+    /**
+     * Handle player-draw-card event
+     * Player spends mana to draw a card and end their turn
+     */
+    handlePlayerDrawCard(socket: Socket, data: PlayerDrawCardEvent): void {
+        const room = this.roomManager.getRoom(data.roomId);
+        if (!room || !room.isPlaying) {
+            this.errorHandler.handleGameNotStarted(socket, data.roomId);
+            return;
+        }
+
+        // Find player by socket id
+        const player = room.players.find((p: Player) => p.socketId === socket.id);
+        if (!player || player.id !== data.playerId) {
+            this.errorHandler.sendError(socket, ErrorCode.PLAYER_NOT_FOUND);
+            return;
+        }
+
+        // Ensure it's player's turn
+        const currentIndex = room.currentPlayerIndex ?? 0;
+        const currentPlayer = room.players[currentIndex];
+        if (player.id !== currentPlayer.id) {
+            this.errorHandler.handleInvalidTurn(socket, currentPlayer.id, player.id);
+            return;
+        }
+
+        // Get player state
+        const playerState = room.playerStates?.[player.id];
+        if (!playerState) {
+            this.errorHandler.sendError(socket, ErrorCode.GAME_NOT_STARTED);
+            return;
+        }
+
+        // Check if player has enough mana
+        const drawCost = playerState.drawCost || 5;
+        if (playerState.mentalPower < drawCost) {
+            this.errorHandler.handleInsufficientMana(socket, drawCost, playerState.mentalPower);
+            return;
+        }
+
+        // Deduct mana
+        playerState.mentalPower -= drawCost;
+        console.log(`[Draw Card] ${player.name} spent ${drawCost} mana (remaining: ${playerState.mentalPower})`);
+
+        // Increase draw cost for next time (5 → 10 → 15 → 20...)
+        const newDrawCost = drawCost + 5;
+        playerState.drawCost = newDrawCost;
+
+        // For now, simulate drawing a random card (in real game, this would be from deck)
+        const drawnCard: Card = {
+            id: `card_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+            name: '뽑은 카드',
+            type: 'attack',
+            healthDamage: 10,
+            cost: 5,
+            description: '임시 카드'
+        };
+
+        // Advance turn
+        const nextIndex = (currentIndex + 1) % room.players.length;
+        room.currentPlayerIndex = nextIndex;
+        room.currentTurn = (room.currentTurn || 1) + (nextIndex === 0 ? 1 : 0);
+        const nextPlayerId = room.players[nextIndex].id;
+
+        // Build result
+        const result: DrawCardResult = {
+            success: true,
+            playerId: player.id,
+            playerName: player.name,
+            cardDrawn: drawnCard,
+            costPaid: drawCost,
+            newDrawCost: newDrawCost,
+            remainingMentalPower: playerState.mentalPower,
+            nextPlayerId,
+            currentTurn: room.currentTurn || 1,
+            message: `${player.name}이(가) ${drawCost} 마나를 소모하여 카드를 뽑았습니다.`
+        };
+
+        // Broadcast result
+        this.io.to(room.id).emit(SocketEvents.CARD_DRAWN, result);
+        this.io.to(room.id).emit(SocketEvents.TURN_END, { 
+            roomId: room.id, 
+            playerId: player.id, 
+            nextPlayerId 
+        });
+        this.io.to(room.id).emit(SocketEvents.TURN_START, { 
+            roomId: room.id, 
+            currentPlayerId: nextPlayerId, 
+            currentTurn: room.currentTurn 
+        });
+
+        console.log(`✅ ${player.name} drew a card. Next draw cost: ${newDrawCost}, Next player: ${nextPlayerId}`);
     }
 }

@@ -59,6 +59,11 @@ export interface PlayerDefendEvent {
     defense?: number;
 }
 
+export interface PlayerDrawCardEvent {
+    roomId: string;
+    playerId: string;
+}
+
 export interface AttackAnnouncedEvent {
     requestId: string;
     attackerId: string;
@@ -219,6 +224,7 @@ export const SocketEvents = {
     GET_ROOMS: 'get-rooms',
     PLAYER_ATTACK: 'player-attack',
     PLAYER_DEFEND: 'player-defend',
+    PLAYER_DRAW_CARD: 'player-draw-card',
     TURN_END: 'turn-end',
     GAME_ACTION: 'game-action',
     SPECIAL_EVENT: 'special-event',
@@ -236,6 +242,7 @@ export const SocketEvents = {
     ATTACK_ANNOUNCED: 'attack-announced',
     DEFEND_REQUEST: 'defend-request',
     ATTACK_RESOLVED: 'attack-resolved',
+    CARD_DRAWN: 'card-drawn',
     PLAYER_DISCONNECTED: 'player-disconnected',
     ERROR: 'error',
     

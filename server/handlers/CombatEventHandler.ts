@@ -635,7 +635,7 @@ export class CombatEventHandler {
         if (!room.playerStates) {
             room.playerStates = {};
             for (const p of room.players) {
-                room.playerStates[p.id] = { health: 100, mentalPower: 100, alive: true };
+                room.playerStates[p.id] = { health: 100, mentalPower: 100, alive: true, drawCost: 5 };
             }
         }
     }

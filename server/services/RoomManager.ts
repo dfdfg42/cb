@@ -137,7 +137,8 @@ export class RoomManager {
                 health: 100,
                 mentalPower: 100,
                 alive: true,
-                debuffs: []
+                debuffs: [],
+                drawCost: 5 // Initial draw cost
             };
         }
 
