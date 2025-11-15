@@ -4,6 +4,7 @@ import { Screen, Player, Card } from './types';
 import { HandManager } from './ui/CardComponent';
 import { PlayersManager } from './ui/PlayerComponent';
 import { GameManager } from './game/GameManager';
+import { FieldMagicManager } from './game/FieldMagicManager';
 import { CombatUI } from './ui/CombatUI';
 import { soundManager } from './audio/SoundManager';
 import { socketClient } from './network/SocketClient';
@@ -1042,17 +1043,16 @@ class Game {
         // 기존 필드 마법 제거
         const session = this.gameManager.getSession();
         if (session.fieldMagic) {
-            uiManager.addLogMessage(`기존 필드 마법 [${session.fieldMagic.name}]이(가) 사라졌습니다!`);
+            const prevName = session.fieldMagic.name;
+            FieldMagicManager.endFieldMagic(
+                session,
+                uiManager,
+                `기존 필드 마법 [${prevName}]이(가) 사라졌습니다!`
+            );
         }
         
         // 새 필드 마법 적용
-        session.fieldMagic = {
-            id: card.id,
-            name: card.name,
-            casterId: currentPlayer.id,
-            effect: card.effect,
-            duration: 5  // 5턴 지속
-        };
+        session.fieldMagic = FieldMagicManager.createFieldMagic(card, currentPlayer.id);
         
         // 정신력 소모
         currentPlayer.mentalPower = Math.max(0, currentPlayer.mentalPower - card.mentalCost);
@@ -1095,7 +1095,7 @@ class Game {
         const hasRandomTargetDebuff = currentPlayer.debuffs.some(
             d => d.type === 'random-target'
         );
-        const hasChaosField = session.fieldMagic?.name === '혼돈의 소용돌이';
+        const hasChaosField = FieldMagicManager.shouldRandomizeTarget(session.fieldMagic);
         
         if (hasRandomTargetDebuff || hasChaosField) {
             // 대상 랜덤 지정

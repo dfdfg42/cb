@@ -4,6 +4,7 @@ import { createShuffledDeck } from '../data/cards';
 import { CombatManager } from './CombatManager';
 import { CardValidator } from './CardValidator';
 import { EventEmitter } from './EventEmitter';
+import { FieldMagicManager } from './FieldMagicManager';
 import { getSystemEventCards, getSystemEventConfig, SystemEventCard, SystemEventCategory } from '../data/systemEvents';
 
 /**
@@ -98,10 +99,12 @@ export class GameManager {
         // 디버프 효과 적용
         this.applyDebuffs(currentPlayer);
         
-        // 필드 마법 효과 적용
-        if (this.session.fieldMagic) {
-            this.applyFieldMagicEffect();
-        }
+        // 필드 마법 지속 효과 적용
+        FieldMagicManager.applyTurnStartEffects(
+            this.session,
+            this.uiManager,
+            (target, health, mental) => this.combatManager.applyDamage(target, health, mental)
+        );
 
         this.uiManager.updateTurnNumber(this.session.currentTurn);
         console.log(`턴 ${this.session.currentTurn}: ${currentPlayer.name}의 차례`);
@@ -175,7 +178,7 @@ export class GameManager {
         }
 
         // CardValidator로 검증
-        const validation = CardValidator.canPlayCards(cards, currentPlayer);
+        const validation = CardValidator.canPlayCards(cards, currentPlayer, this.session.fieldMagic);
         if (!validation.valid) {
             this.uiManager.showAlert(validation.error!);
             return false;
@@ -376,44 +379,6 @@ export class GameManager {
         }
 
         this.eventEmitter.emit('event:devil', { card, targetId: target.id });
-    }
-
-    private applyFieldMagicEffect(): void {
-        if (!this.session.fieldMagic) return;
-
-        const caster = this.session.players.find(p => p.id === this.session.fieldMagic?.casterId);
-        const fieldMagic = this.session.fieldMagic;
-        
-        // 필드 마법 효과 적용
-        if (fieldMagic.name === '화염의 대지') {
-            // 모든 적에게 매 턴 5 데미지
-            this.session.players.forEach(player => {
-                if (player.id !== fieldMagic.casterId && player.isAlive) {
-                    this.combatManager.applyDamage(player, 5, 0);
-                    this.uiManager.addLogMessage(`🔥 ${player.name}이(가) 화염의 대지에서 5 데미지를 받았습니다!`);
-                }
-            });
-        } else if (fieldMagic.name === '치유의 성역' && caster && caster.isAlive) {
-            // 발동자는 매 턴 체력 10 회복
-            caster.health = Math.min(100, caster.health + 10);
-            this.uiManager.addLogMessage(`✨ ${caster.name}이(가) 치유의 성역에서 체력 10을 회복했습니다!`);
-        } else if (fieldMagic.name === '얼음 왕국' && caster && caster.isAlive) {
-            this.uiManager.addLogMessage(`❄️ 얼음 왕국이 모든 적의 공격력을 약화시킵니다!`);
-        } else if (fieldMagic.name === '마력의 폭풍' && caster && caster.isAlive) {
-            // 발동자는 매 턴 정신력 3 회복
-            caster.mentalPower = Math.min(caster.maxMentalPower, caster.mentalPower + 3);
-            this.uiManager.addLogMessage(`⚡ ${caster.name}이(가) 마력의 폭풍에서 정신력 3을 회복했습니다!`);
-        } else if (fieldMagic.name === '혼돈의 소용돌이') {
-            this.uiManager.addLogMessage(`🌀 혼돈의 소용돌이가 전장을 휘감습니다!`);
-        }
-
-        // 지속 시간 감소
-        fieldMagic.duration--;
-        if (fieldMagic.duration <= 0) {
-            this.uiManager.addLogMessage(`필드 마법 [${fieldMagic.name}]의 효과가 끝났습니다!`);
-            this.session.fieldMagic = undefined;
-            this.uiManager.updateFieldMagic(null);
-        }
     }
 
     // ===========================================
