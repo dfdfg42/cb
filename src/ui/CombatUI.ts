@@ -4,13 +4,14 @@ export class CombatUI {
     private attackerCardsContainer: HTMLElement;
     private defenderCardsContainer: HTMLElement;
     private summaryPlayersEl: HTMLElement | null = null;
-    private summaryCardsEl: HTMLElement | null = null;
     private summaryDamageEl: HTMLElement | null = null;
     private summaryDebuffsEl: HTMLElement | null = null;
+    private pendingHealthDamage = 0;
+    private pendingMentalDamage = 0;
 
     constructor() {
-        const attackerCards = document.getElementById('attacker-cards');
-        const defenderCards = document.getElementById('defender-cards');
+        const attackerCards = document.getElementById('summary-attacker-cards');
+        const defenderCards = document.getElementById('summary-defender-cards');
 
         if (!attackerCards || !defenderCards) {
             throw new Error('Combat UI containers not found');
@@ -21,7 +22,6 @@ export class CombatUI {
 
         // summary elements (optional)
         this.summaryPlayersEl = document.getElementById('summary-players');
-        this.summaryCardsEl = document.getElementById('summary-cards');
         this.summaryDamageEl = document.getElementById('summary-damage');
         this.summaryDebuffsEl = document.getElementById('summary-debuffs');
     }
@@ -29,44 +29,41 @@ export class CombatUI {
     public showAttackCards(cards: any[]): void {
         this.attackerCardsContainer.innerHTML = '';
         
+        const totals = this.estimateDamageTotals(cards);
         cards.forEach(card => {
-            const cardEl = document.createElement('div');
-            cardEl.className = 'combat-card-mini';
-            cardEl.textContent = card.name;
-            cardEl.title = `${card.healthDamage || 0}데미지`;
-            this.attackerCardsContainer.appendChild(cardEl);
+            this.attackerCardsContainer.appendChild(this.createCardChip(card, 'attack'));
         });
+        this.updateDamagePreview(totals.health, totals.mental);
     }
 
     public showDefenseCards(cards: any[]): void {
         this.defenderCardsContainer.innerHTML = '';
         
+        let totalDefense = 0;
         cards.forEach(card => {
-            const cardEl = document.createElement('div');
-            cardEl.className = 'combat-card-mini defense';
-            cardEl.textContent = card.name;
-            cardEl.title = `${card.defense || 0}방어`;
-            this.defenderCardsContainer.appendChild(cardEl);
+            this.defenderCardsContainer.appendChild(this.createCardChip(card, 'defense'));
+            totalDefense += Number(card?.defense || 0);
         });
+        this.updateDefenseEstimate(totalDefense);
     }
 
     public clearCombat(): void {
         this.attackerCardsContainer.innerHTML = '';
         this.defenderCardsContainer.innerHTML = '';
         if (this.summaryPlayersEl) this.summaryPlayersEl.textContent = '- → -';
-        if (this.summaryCardsEl) this.summaryCardsEl.textContent = '-';
         if (this.summaryDamageEl) this.summaryDamageEl.textContent = '0';
         if (this.summaryDebuffsEl) this.summaryDebuffsEl.textContent = '-';
+        this.pendingHealthDamage = 0;
+        this.pendingMentalDamage = 0;
+        this.updateDamagePreview(0, 0);
     }
 
     public showSummary(attackerName: string, defenderName: string, cards: any[], damage: number, debuffs?: string[], chainSource?: string): void {
         if (this.summaryPlayersEl) this.summaryPlayersEl.textContent = `${attackerName} → ${defenderName}`;
-        if (this.summaryCardsEl) {
-            if (!cards || cards.length === 0) {
-                this.summaryCardsEl.textContent = '-';
-            } else {
-                this.summaryCardsEl.textContent = cards.map((c: any) => c.name).join(', ');
-            }
+        if (cards && cards.length > 0) {
+            this.showAttackCards(cards);
+        } else if (this.summaryDamageEl) {
+            this.summaryDamageEl.textContent = '0';
         }
         if (this.summaryDamageEl) this.summaryDamageEl.textContent = String(damage || 0);
 
@@ -105,11 +102,8 @@ export class CombatUI {
             }
         }
 
-        if (this.summaryCardsEl) {
-            const atkList = (cards && cards.length > 0) ? cards.map((c: any) => c.name).join(', ') : '-';
-            const defList = (defenseCards && defenseCards.length > 0) ? defenseCards.map((c: any) => c.name).join(', ') : '-';
-            this.summaryCardsEl.textContent = `공격: ${atkList} | 방어: ${defList}`;
-        }
+        this.showAttackCards(cards || []);
+        this.showDefenseCards(defenseCards || []);
 
         if (this.summaryDamageEl) {
             if (isReflect) {
@@ -145,13 +139,112 @@ export class CombatUI {
             const targetPlayer = null as any; // caller can still call showDamageAnimation with real player object if desired
             if (heal > 0) this.showHealAnimation(targetPlayer, heal);
             if (damage > 0) this.showDamageAnimation(targetPlayer, damage);
+            if (mentalDamage > 0) this.showMentalDamageAnimation(targetPlayer, mentalDamage);
         } catch (e) {
             // ignore animation errors
         }
+
+        this.setIncomingDamage(0, 0, false);
+    }
+
+    private createCardChip(card: any, fallbackVariant: 'attack' | 'defense'): HTMLElement {
+        const cardEl = document.createElement('div');
+        const normalizedType = (card?.type || '').toLowerCase();
+        let variant: string = fallbackVariant;
+        if (normalizedType.includes('defense')) {
+            variant = 'defense';
+        } else if (normalizedType.includes('magic')) {
+            variant = 'magic';
+        } else if (normalizedType.includes('field')) {
+            variant = 'field';
+        } else if (normalizedType.includes('attack')) {
+            variant = 'attack';
+        }
+
+        cardEl.className = `summary-card-chip ${variant}`;
+        cardEl.textContent = card?.name || '카드';
+        cardEl.title = card?.description || '';
+        return cardEl;
+    }
+
+    public setIncomingDamage(healthDamage: number, mentalDamage: number = 0, updateDisplay: boolean = true): void {
+        this.pendingHealthDamage = Math.max(0, Math.floor(healthDamage || 0));
+        this.pendingMentalDamage = Math.max(0, Math.floor(mentalDamage || 0));
+        if (updateDisplay) {
+            this.updateDefenseEstimate(0);
+        }
+    }
+
+    public estimateDamageTotals(cards: any[]): { health: number; mental: number } {
+        return cards.reduce(
+            (acc, card) => {
+                const dmg = this.extractDamage(card);
+                acc.health += dmg.health;
+                acc.mental += dmg.mental;
+                return acc;
+            },
+            { health: 0, mental: 0 }
+        );
+    }
+
+    private extractDamage(card: any): { health: number; mental: number } {
+        const health = Number(
+            card?.healthDamage ??
+            card?.phys_atk ??
+            card?.damage ??
+            0
+        );
+        const mental = Number(
+            card?.mentalDamage ??
+            card?.mind_atk ??
+            card?.mental ??
+            0
+        );
+        return {
+            health: Number.isFinite(health) ? health : 0,
+            mental: Number.isFinite(mental) ? mental : 0
+        };
+    }
+
+    private updateDamagePreview(health: number, mental: number): void {
+        if (!this.summaryDamageEl) return;
+        this.summaryDamageEl.textContent = this.formatDamageText(health, mental);
+    }
+
+    private updateDefenseEstimate(totalDefense: number): void {
+        if (!this.summaryDamageEl) return;
+        if (this.pendingHealthDamage === 0 && this.pendingMentalDamage === 0 && totalDefense === 0) {
+            this.summaryDamageEl.textContent = '0';
+            return;
+        }
+        const remainingHealth = Math.max(0, this.pendingHealthDamage - totalDefense);
+        const parts: string[] = [];
+        parts.push(`체력 ${remainingHealth}`);
+        if (this.pendingMentalDamage > 0) {
+            parts.push(`정신 ${this.pendingMentalDamage}`);
+        }
+        let text = `예상 피해: ${parts.join(' / ')}`;
+        if (totalDefense > 0) {
+            text += ` (방어력 ${totalDefense})`;
+        }
+        this.summaryDamageEl.textContent = text;
+    }
+
+    private formatDamageText(health: number, mental: number): string {
+        const segments: string[] = [];
+        segments.push(`체력 ${health}`);
+        if (mental > 0) {
+            segments.push(`정신 ${mental}`);
+        }
+        if (segments.length === 0) {
+            return '0';
+        }
+        return segments.join(' / ');
     }
 
     public showDamageAnimation(_targetPlayer: Player, damage: number): void {
-        // 간단한 데미지 표시 (나중에 애니메이션 추가)
+        if (damage <= 0) return;
+
         const damageText = document.createElement('div');
         damageText.className = 'damage-popup';
         damageText.textContent = `-${damage}`;
@@ -173,6 +266,33 @@ export class CombatUI {
 
         setTimeout(() => {
             damageText.remove();
+        }, 1000);
+    }
+
+    public showMentalDamageAnimation(_targetPlayer: Player, damage: number): void {
+        if (damage <= 0) return;
+
+        const mentalText = document.createElement('div');
+        mentalText.className = 'damage-popup';
+        mentalText.textContent = `-${damage} MP`;
+        mentalText.style.cssText = `
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 42px;
+            font-weight: bold;
+            color: #3498db;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+            z-index: 9999;
+            pointer-events: none;
+            animation: damageFloat 1s ease-out forwards;
+        `;
+
+        document.body.appendChild(mentalText);
+
+        setTimeout(() => {
+            mentalText.remove();
         }, 1000);
     }
 

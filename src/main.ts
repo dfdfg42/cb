@@ -1,13 +1,13 @@
 import './styles/main.css';
 import { uiManager } from './ui/UIManager';
-import { Screen, Player } from './types';
+import { Screen, Player, Card } from './types';
 import { HandManager } from './ui/CardComponent';
 import { PlayersManager } from './ui/PlayerComponent';
-import { drawRandomCards } from './data/cards';
 import { GameManager } from './game/GameManager';
 import { CombatUI } from './ui/CombatUI';
 import { soundManager } from './audio/SoundManager';
 import { socketClient } from './network/SocketClient';
+import { CARD_DATABASE } from './data/cards';
 
 class Game {
     private userName: string = '';
@@ -18,6 +18,7 @@ class Game {
     private combatUI?: CombatUI;
     private isMultiplayer: boolean = false;
     private pendingDefenseRequestId?: string | null = null;
+    private isLocalDefenseMode = false;
     private pendingJoinMode: 'normal' | 'ranked' | null = null;
     private combatClearTimer: number | null = null;
     
@@ -380,10 +381,11 @@ class Game {
                     }
 
                     // draw replacement cards equal to removedCount
-                    if (removedCount > 0) {
-                        const newCards = drawRandomCards(removedCount);
-                        attacker.cards.push(...newCards);
-                        uiManager.addLogMessage(`${attacker.name}이(가) ${removedCount}장의 카드를 보충했습니다.`);
+                    if (removedCount > 0 && this.gameManager) {
+                        const newCards = this.gameManager.drawCardsForPlayer(attacker.id, removedCount);
+                        if (newCards.length > 0) {
+                            uiManager.addLogMessage(`${attacker.name}이(가) ${newCards.length}장의 카드를 보충했습니다.`);
+                        }
                     }
                 }
             } catch (e) {
@@ -416,10 +418,11 @@ class Game {
                         });
                     }
 
-                    if (removedDefCount > 0) {
-                        const newCards = drawRandomCards(removedDefCount);
-                        target.cards.push(...newCards);
-                        uiManager.addLogMessage(`${target.name}이(가) ${removedDefCount}장의 카드를 보충했습니다.`);
+                    if (removedDefCount > 0 && this.gameManager) {
+                        const newCards = this.gameManager.drawCardsForPlayer(target.id, removedDefCount);
+                        if (newCards.length > 0) {
+                            uiManager.addLogMessage(`${target.name}이(가) ${newCards.length}장의 카드를 보충했습니다.`);
+                        }
                     }
                 }
             } catch (e) {
@@ -512,6 +515,7 @@ class Game {
                 this.restoreConfirmButton();
                 // clear any stored pending defense request id
                 this.pendingDefenseRequestId = null;
+                this.isLocalDefenseMode = false;
             }
         });
 
@@ -525,6 +529,7 @@ class Game {
 
             // show central combat UI for attack (no modal)
             if (this.combatUI) {
+                this.combatUI.setIncomingDamage(data.damage || 0, data.mentalDamage || 0);
                 // show attacker cards if provided
                 this.combatUI.showAttackCards(data.cardsUsed || []);
                 // reset any previous defender cards
@@ -563,6 +568,7 @@ class Game {
 
                 // show central combat UI (attacker cards) so everyone can see
                 if (this.combatUI) {
+                    this.combatUI.setIncomingDamage(data.damage || 0, data.mentalDamage || 0);
                     this.combatUI.showAttackCards(data.cardsUsed || []);
                     this.combatUI.showDefenseCards([]);
                 }
@@ -587,6 +593,7 @@ class Game {
 
             // show central combat UI (attacker cards) so defender can see what they're defending against
             if (this.combatUI) {
+                this.combatUI.setIncomingDamage(data.damage || 0, data.mentalDamage || 0);
                 this.combatUI.showAttackCards(data.cardsUsed || []);
                 this.combatUI.showDefenseCards([]);
             }
@@ -726,6 +733,7 @@ class Game {
                         uiManager.clearCombatNames();
                         console.log('[DEBUG] clearing pendingDefenseRequestId');
                         this.pendingDefenseRequestId = null;
+                        this.isLocalDefenseMode = false;
                     };
                 } else {
                     console.log('[DEBUG] summaryTakeBtn element NOT found when trying to show it');
@@ -1237,6 +1245,15 @@ class Game {
         if (!defender) return;
 
         uiManager.showAlert('당신이 공격 대상입니다! 방어 카드를 선택하세요!');
+        this.isLocalDefenseMode = true;
+
+        if (this.combatUI) {
+            const attackCards = this.gameManager.getSession().attackCards || [];
+            const totals = this.combatUI.estimateDamageTotals(attackCards || []);
+            this.combatUI.setIncomingDamage(totals.health, totals.mental);
+            this.combatUI.showAttackCards(attackCards || []);
+            this.combatUI.showDefenseCards([]);
+        }
         
         // 손패를 방어 카드만 선택 가능하도록 표시
         const localPlayer = this.gameManager.getLocalPlayer();
@@ -1292,6 +1309,7 @@ class Game {
 
         // 방어 카드 선택 (빈 배열도 가능 - 방어하지 않음, 여러 장 선택 가능)
         this.gameManager.selectDefenseCards(selectedCards);
+        this.isLocalDefenseMode = false;
         
         if (selectedCards.length > 0) {
             soundManager.playDefense();
@@ -1317,6 +1335,7 @@ class Game {
             if (this.handManager) this.handManager.setEnabled(false);
             // clear pending defense request id and any timeout/interval
             this.pendingDefenseRequestId = null;
+            this.isLocalDefenseMode = false;
             if ((this as any)._pendingDefenseTimer) {
                 clearTimeout((this as any)._pendingDefenseTimer);
                 (this as any)._pendingDefenseTimer = undefined;
@@ -1355,6 +1374,7 @@ class Game {
                         const dm = document.getElementById('defend-modal');
                         if (dm) dm.classList.remove('active');
                         this.pendingDefenseRequestId = null;
+                        this.isLocalDefenseMode = false;
 
                         setTimeout(() => {
                             if (newDefender.id === this.gameManager!.getLocalPlayer().id) {
@@ -1764,7 +1784,7 @@ class Game {
             maxHealth: 100,
             mentalPower: 100,
             maxMentalPower: 100,
-            cards: drawRandomCards(5),
+            cards: [],
             isAlive: true,
             isReady: true,
             debuffs: []
@@ -1807,7 +1827,11 @@ class Game {
 
             // 항상 선택된 카드를 중앙 전투 영역에 노출
             if (this.combatUI) {
-                this.combatUI.showAttackCards(selectedCards);
+                if (this.pendingDefenseRequestId || this.isLocalDefenseMode) {
+                    this.combatUI.showDefenseCards(selectedCards);
+                } else {
+                    this.combatUI.showAttackCards(selectedCards);
+                }
             }
 
             // 선택이 변경되면, 로컬 플레이어의 턴일 때 즉시 공격 준비(타겟 선택) UI를 표시
@@ -1845,6 +1869,41 @@ class Game {
         console.log('💡 "턴 종료" 버튼으로 턴을 넘길 수 있습니다.');
     }
 
+    /**
+     * 테스트/자동화용: 특정 플레이어의 손패를 지정한 카드 이름으로 강제 설정한다.
+     * 실제 게임 로직에는 사용하지 말 것.
+     */
+    public debugSetHand(playerName: string, cardNames: string[]): void {
+        if (!this.gameManager) {
+            throw new Error('Game has not been initialized yet.');
+        }
+
+        const session = this.gameManager.getSession();
+        const targetPlayer = session.players.find(p => p.name === playerName);
+        if (!targetPlayer) {
+            throw new Error(`Player "${playerName}" was not found in session.`);
+        }
+
+        const forcedCards: Card[] = cardNames.map((name, index) => {
+            const template = CARD_DATABASE.find(card => card.name === name);
+            if (!template) {
+                throw new Error(`Card "${name}" does not exist in CARD_DATABASE.`);
+            }
+            return {
+                ...template,
+                id: `${template.id}_debug_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 6)}`
+            };
+        });
+
+        targetPlayer.cards = forcedCards;
+
+        // 로컬 플레이어라면 손패 UI를 즉시 갱신한다.
+        if (targetPlayer.id === this.currentPlayerId && this.handManager) {
+            this.handManager.clearHand();
+            this.handManager.addCards(targetPlayer.cards);
+        }
+    }
+
     // 테스트용: 플레이어 데미지
     takeDamage(playerIndex: number, damage: number): void {
         if (!this.gameManager) {
@@ -1866,9 +1925,14 @@ class Game {
 
     // 테스트용: 카드 추가
     drawCard(): void {
-        if (this.handManager) {
-            const newCard = drawRandomCards(1)[0];
-            this.handManager.addCard(newCard);
+        if (!this.handManager || !this.gameManager) {
+            return;
+        }
+
+        const localPlayer = this.gameManager.getLocalPlayer();
+        const newCards = this.gameManager.drawCardsForPlayer(localPlayer.id, 1);
+        if (newCards.length > 0) {
+            this.handManager.addCard(newCards[0]);
             uiManager.addLogMessage('카드 1장을 뽑았습니다.');
         }
     }

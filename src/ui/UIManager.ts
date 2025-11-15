@@ -92,32 +92,27 @@ export class UIManager implements IUIManager {
     
     // 필드 마법 표시
     updateFieldMagic(magicName: string | null): void {
-        const fieldMagicArea = document.getElementById('field-magic-area');
-        if (fieldMagicArea) {
-            const label = fieldMagicArea.querySelector('.field-magic-label');
-            if (label) {
-                label.textContent = magicName || '필드 마법 없음';
-            }
+        const fieldMagicLabel = document.getElementById('summary-field-magic');
+        if (fieldMagicLabel) {
+            fieldMagicLabel.textContent = magicName || '필드 마법 없음';
         }
     }
     
     // 공격자/방어자 이름 업데이트
     // 공격자/방어자 이름 업데이트 — 실제 공격이 확정되었을 때만 호출하세요
     showCombatNames(attackerName: string, defenderName: string): void {
-        const attackerNameEl = document.getElementById('attacker-name');
-        const defenderNameEl = document.getElementById('defender-name');
-        
-        if (attackerNameEl) attackerNameEl.textContent = attackerName;
-        if (defenderNameEl) defenderNameEl.textContent = defenderName;
+        const summaryPlayersEl = document.getElementById('summary-players');
+        if (summaryPlayersEl) {
+            summaryPlayersEl.textContent = `${attackerName} → ${defenderName}`;
+        }
     }
 
     // 전투 중앙 이름 표시 초기화 (공격/방어가 끝났거나 취소되었을 때 호출)
     clearCombatNames(): void {
-        const attackerNameEl = document.getElementById('attacker-name');
-        const defenderNameEl = document.getElementById('defender-name');
-        
-        if (attackerNameEl) attackerNameEl.textContent = '-';
-        if (defenderNameEl) defenderNameEl.textContent = '-';
+        const summaryPlayersEl = document.getElementById('summary-players');
+        if (summaryPlayersEl) {
+            summaryPlayersEl.textContent = '- → -';
+        }
     }
 
     // 기존 updateCombatNames는 더이상 사용하지 않습니다. 필요하면 showCombatNames/clearCombatNames를 사용하세요.
