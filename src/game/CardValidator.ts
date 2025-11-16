@@ -1,4 +1,5 @@
-import { Card, CardType, Player } from '../types';
+import { Card, CardType, Player, FieldMagic } from '../types';
+import { FieldMagicManager } from './FieldMagicManager';
 
 /**
  * CardValidator - 카드 사용 규칙 검증
@@ -8,7 +9,11 @@ export class CardValidator {
     /**
      * 카드를 플레이할 수 있는지 검증
      */
-    public static canPlayCards(cards: Card[], player: Player): {
+    public static canPlayCards(
+        cards: Card[],
+        player: Player,
+        activeFieldMagic?: FieldMagic
+    ): {
         valid: boolean;
         error?: string;
     } {
@@ -37,7 +42,7 @@ export class CardValidator {
         }
 
         // 정신력 확인
-        const totalMentalCost = cards.reduce((sum, card) => sum + card.mentalCost, 0);
+        const totalMentalCost = this.calculateTotalMentalCost(cards, player, activeFieldMagic);
         if (totalMentalCost > player.mentalPower) {
             return { valid: false, error: '정신력이 부족합니다!' };
         }
@@ -161,12 +166,16 @@ export class CardValidator {
     /**
      * 정신력 소비 계산 및 검증
      */
-    public static validateManaCost(cards: Card[], player: Player): {
+    public static validateManaCost(
+        cards: Card[],
+        player: Player,
+        activeFieldMagic?: FieldMagic
+    ): {
         valid: boolean;
         totalCost: number;
         error?: string;
     } {
-        const totalCost = cards.reduce((sum, card) => sum + card.mentalCost, 0);
+        const totalCost = this.calculateTotalMentalCost(cards, player, activeFieldMagic);
         
         if (totalCost > player.mentalPower) {
             return { 
@@ -177,5 +186,18 @@ export class CardValidator {
         }
 
         return { valid: true, totalCost };
+    }
+
+    private static calculateTotalMentalCost(
+        cards: Card[],
+        player: Player,
+        activeFieldMagic?: FieldMagic
+    ): number {
+        const baseCost = cards.reduce((sum, card) => sum + card.mentalCost, 0);
+        return FieldMagicManager.getEffectiveMentalCost(
+            baseCost,
+            activeFieldMagic,
+            player.id
+        );
     }
 }

@@ -100,6 +100,31 @@ body {
     color: var(--text-light);
 }
 
+.btn-mana {
+    background: linear-gradient(135deg, #7f5dff, #2db7ff);
+    color: var(--text-light);
+    min-width: 150px;
+    text-transform: none;
+}
+
+.btn-mana .label {
+    display: block;
+    font-size: 14px;
+    letter-spacing: 0.5px;
+}
+
+.btn-mana .cost {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    opacity: 0.85;
+    margin-top: 2px;
+}
+
+.btn-mana:disabled {
+    background: linear-gradient(135deg, #4a4c65, #3c4a58);
+}
+
 .btn-game {
     display: flex;
     flex-direction: column;

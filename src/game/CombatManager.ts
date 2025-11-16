@@ -1,5 +1,6 @@
 import { Player, Card, CardType, CardEffect, GameSession, Debuff, DebuffType } from '../types';
 import { IUIManager } from '../ui/IUIManager';
+import { FieldMagicManager } from './FieldMagicManager';
 
 /**
  * CombatManager - 전투 로직 전담 클래스
@@ -134,18 +135,6 @@ export class CombatManager {
         let totalHealthDamage = 0;
         let totalMentalDamage = 0;
 
-        // 필드 마법: 화염의 대지 (발동자 공격력 +5)
-        if (session.fieldMagic?.name === '화염의 대지' && 
-            session.fieldMagic.casterId === attacker.id) {
-            totalHealthDamage += 5;
-        }
-
-        // 필드 마법: 얼음 왕국 (적 공격력 -3)
-        if (session.fieldMagic?.name === '얼음 왕국' && 
-            session.fieldMagic.casterId !== attacker.id) {
-            totalHealthDamage = Math.max(0, totalHealthDamage - 3);
-        }
-
         // 각 카드 적용: HEAL은 즉시 회복을 적용
         session.attackCards.forEach(card => {
             if (card.effect === CardEffect.HEAL) {
@@ -162,8 +151,18 @@ export class CombatManager {
             }
         });
 
+        const attackModifier = FieldMagicManager.getAttackModifier(session.fieldMagic, attacker.id);
+        if (attackModifier !== 0) {
+            totalHealthDamage = Math.max(0, totalHealthDamage + attackModifier);
+        }
+
         // 정신력 소모
-        const mentalCost = session.attackCards.reduce((sum, card) => sum + card.mentalCost, 0);
+        const baseMentalCost = session.attackCards.reduce((sum, card) => sum + card.mentalCost, 0);
+        const mentalCost = FieldMagicManager.getEffectiveMentalCost(
+            baseMentalCost,
+            session.fieldMagic,
+            attacker.id
+        );
         attacker.mentalPower = Math.max(0, attacker.mentalPower - mentalCost);
 
         // 방어 처리
@@ -184,10 +183,9 @@ export class CombatManager {
             defender.mentalPower = Math.max(0, defender.mentalPower - card.mentalCost);
         });
 
-        // 필드 마법: 얼음 왕국 (발동자 방어력 +5)
-        if (session.fieldMagic?.name === '얼음 왕국' && 
-            session.fieldMagic.casterId === defender.id) {
-            totalDefense += 5;
+        const defenseBonus = FieldMagicManager.getDefenseBonus(session.fieldMagic, defender.id);
+        if (defenseBonus > 0) {
+            totalDefense += defenseBonus;
         }
 
         // 되받아치기 - 공격자가 새로운 방어자가 됨
