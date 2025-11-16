@@ -132,13 +132,17 @@
 
             <!-- 하단 플레이어 손패 -->
             <div class="player-hand-area">
-                <div class="hand-cards" id="hand-cards"></div>
-                <div class="action-buttons">
-                    <button id="confirm-btn" class="btn btn-primary" disabled>확정</button>
-                    <button id="end-turn-btn" class="btn btn-secondary">턴 종료</button>
+                    <div class="hand-cards" id="hand-cards"></div>
+                    <div class="action-buttons">
+                        <button id="draw-card-btn" class="btn btn-mana" disabled>
+                            <span class="label">마나 드로우</span>
+                            <span class="cost">-5 MP</span>
+                        </button>
+                        <button id="confirm-btn" class="btn btn-primary" disabled>확정</button>
+                        <button id="end-turn-btn" class="btn btn-secondary">턴 종료</button>
+                    </div>
                 </div>
             </div>
-        </div>
 
         <!-- 게임 오버 화면 -->
         <div id="game-over-screen" class="screen">

@@ -1,6 +1,6 @@
 import './styles/main.css';
 import { uiManager } from './ui/UIManager';
-import { Screen, Player, Card } from './types';
+import { Screen, Player, Card, CardEffect, CardType } from './types';
 import { HandManager } from './ui/CardComponent';
 import { PlayersManager } from './ui/PlayerComponent';
 import { GameManager } from './game/GameManager';
@@ -9,6 +9,9 @@ import { CombatUI } from './ui/CombatUI';
 import { soundManager } from './audio/SoundManager';
 import { socketClient } from './network/SocketClient';
 import { CARD_DATABASE } from './data/cards';
+
+const DEFAULT_DRAW_COST = 5;
+const DRAW_COST_STEP = 5;
 
 class Game {
     private userName: string = '';
@@ -22,6 +25,8 @@ class Game {
     private isLocalDefenseMode = false;
     private pendingJoinMode: 'normal' | 'ranked' | null = null;
     private combatClearTimer: number | null = null;
+    private playerDrawCosts: Map<string, number> = new Map();
+    private isDrawActionPending = false;
     
     constructor() {
         this.playersManager = new PlayersManager();
@@ -162,6 +167,7 @@ class Game {
         // 게임 화면 - 확정/턴 종료
         const confirmBtn = document.getElementById('confirm-btn');
         const endTurnBtn = document.getElementById('end-turn-btn');
+        const drawCardBtn = document.getElementById('draw-card-btn');
         
         if (confirmBtn) {
             confirmBtn.addEventListener('click', () => {
@@ -174,6 +180,13 @@ class Game {
             endTurnBtn.addEventListener('click', () => {
                 soundManager.playClick();
                 this.endTurn();
+            });
+        }
+
+        if (drawCardBtn) {
+            drawCardBtn.addEventListener('click', () => {
+                soundManager.playClick();
+                this.handleDrawCardClick();
             });
         }
         
@@ -517,7 +530,13 @@ class Game {
                 // clear any stored pending defense request id
                 this.pendingDefenseRequestId = null;
                 this.isLocalDefenseMode = false;
+                this.updateDrawButtonState();
             }
+        });
+
+        socketClient.setOnCardDrawn((data: any) => {
+            console.log('카드 드로우 결과 수신:', data);
+            this.handleServerCardDraw(data);
         });
 
         // attack announced: show central info (attribute + damage)
@@ -580,6 +599,7 @@ class Game {
             console.log(`[DEBUG] defend-request for LOCAL player, setting pendingDefenseRequestId`);
             this.pendingDefenseRequestId = data.requestId;
             console.log(`[DEBUG] pendingDefenseRequestId set -> ${this.pendingDefenseRequestId}`);
+            this.updateDrawButtonState();
 
             const attrEl = document.getElementById('defend-attribute');
             const dmgEl = document.getElementById('defend-damage');
@@ -735,6 +755,7 @@ class Game {
                         console.log('[DEBUG] clearing pendingDefenseRequestId');
                         this.pendingDefenseRequestId = null;
                         this.isLocalDefenseMode = false;
+                        this.updateDrawButtonState();
                     };
                 } else {
                     console.log('[DEBUG] summaryTakeBtn element NOT found when trying to show it');
@@ -746,6 +767,10 @@ class Game {
         // 에러 처리
         socketClient.setOnError((data) => {
             uiManager.showAlert(data.message);
+            if (this.isDrawActionPending) {
+                this.isDrawActionPending = false;
+                this.updateDrawButtonState();
+            }
         });
         
         // 플레이어 연결 해제
@@ -803,6 +828,7 @@ class Game {
                     this.handManager?.setEnabled(false);
                 }
             }
+            this.updateDrawButtonState();
         });
 
         // turn-start 이벤트: 서버에서 권위적으로 현재 플레이어와 턴을 전송
@@ -834,6 +860,7 @@ class Game {
             
             // 턴 번호 업데이트
             uiManager.updateTurnNumber(data.currentTurn);
+            this.updateDrawButtonState();
         });
         
         // 특수 이벤트 수신
@@ -848,9 +875,31 @@ class Game {
         // 플레이어 상태 업데이트 수신
         socketClient.setOnPlayerStateUpdate((data) => {
             console.log('플레이어 상태 업데이트:', data);
-            if (!this.gameManager) return;
+            if (!this.gameManager || !data?.playerId) return;
             
-            this.playersManager.refreshAll();
+            const player = this.gameManager.getPlayerById(data.playerId);
+            if (!player) return;
+
+            if (typeof data.health === 'number') {
+                player.health = data.health;
+            }
+            if (typeof data.mentalPower === 'number') {
+                player.mentalPower = data.mentalPower;
+            }
+            if (typeof data.drawCost === 'number') {
+                this.setPlayerDrawCost(player.id, data.drawCost);
+            }
+            if (Array.isArray(data.cards)) {
+                const normalizedCards = data.cards.map((card: any) => this.normalizeServerCard(card));
+                player.cards = normalizedCards;
+                if (player.id === this.currentPlayerId && this.handManager) {
+                    this.handManager.clearHand();
+                    this.handManager.addCards(player.cards);
+                }
+            }
+            
+            this.playersManager.updatePlayer(player);
+            this.updateDrawButtonState();
         });
         
         // 게임 종료 수신
@@ -1246,6 +1295,7 @@ class Game {
 
         uiManager.showAlert('당신이 공격 대상입니다! 방어 카드를 선택하세요!');
         this.isLocalDefenseMode = true;
+        this.updateDrawButtonState();
 
         if (this.combatUI) {
             const attackCards = this.gameManager.getSession().attackCards || [];
@@ -1310,6 +1360,7 @@ class Game {
         // 방어 카드 선택 (빈 배열도 가능 - 방어하지 않음, 여러 장 선택 가능)
         this.gameManager.selectDefenseCards(selectedCards);
         this.isLocalDefenseMode = false;
+        this.updateDrawButtonState();
         
         if (selectedCards.length > 0) {
             soundManager.playDefense();
@@ -1346,6 +1397,7 @@ class Game {
             }
             const tEl = document.getElementById('summary-timer');
             if (tEl) tEl.textContent = '-';
+            this.updateDrawButtonState();
         }
         
         // 전투 UI에 카드 표시
@@ -1375,6 +1427,7 @@ class Game {
                         if (dm) dm.classList.remove('active');
                         this.pendingDefenseRequestId = null;
                         this.isLocalDefenseMode = false;
+                        this.updateDrawButtonState();
 
                         setTimeout(() => {
                             if (newDefender.id === this.gameManager!.getLocalPlayer().id) {
@@ -1629,6 +1682,7 @@ class Game {
 
         // 턴 번호 업데이트
         uiManager.updateTurnNumber(session.currentTurn);
+        this.updateDrawButtonState();
         
         // 게임 오버 체크
         this.checkGameOver();
@@ -1806,11 +1860,13 @@ class Game {
     
     private setupGameUI(): void {
         if (!this.gameManager) return;
+        this.isDrawActionPending = false;
 
         // 플레이어 정보 설정
         const session = this.gameManager.getSession();
         if (session) {
             this.playersManager.setPlayers(session.players);
+            this.initializeDrawCosts(session.players);
             // 세션의 현재 턴 플레이어를 우선으로 사용합니다 (서버/게임 로직 권위)
             this.playersManager.setActivePlayer(session.currentPlayerId);
         }
@@ -1864,9 +1920,148 @@ class Game {
             uiManager.addLogMessage(`${currentPlayer.name}의 턴입니다!`);
         }
         
+        this.updateDrawButtonState();
+        
         console.log('✅ 실제 게임 시작!');
         console.log('💡 카드를 선택하고 "확정" 버튼을 눌러 공격하세요!');
         console.log('💡 "턴 종료" 버튼으로 턴을 넘길 수 있습니다.');
+    }
+
+    private handleDrawCardClick(): void {
+        if (!this.gameManager) return;
+
+        if (!this.gameManager.isLocalPlayerTurn()) {
+            uiManager.showAlert('당신의 턴이 아닙니다!');
+            return;
+        }
+
+        const localPlayer = this.gameManager.getLocalPlayer();
+        const cost = this.getPlayerDrawCost(localPlayer.id);
+
+        if (localPlayer.mentalPower < cost) {
+            uiManager.showAlert('마나가 부족합니다!');
+            this.updateDrawButtonState();
+            return;
+        }
+
+        if (this.isMultiplayer) {
+            if (this.isDrawActionPending) return;
+            this.isDrawActionPending = true;
+            this.updateDrawButtonState();
+            socketClient.sendDrawCard(this.currentPlayerId);
+            return;
+        }
+
+        // 로컬 모드: 즉시 처리
+        localPlayer.mentalPower = Math.max(0, localPlayer.mentalPower - cost);
+        const drawnCards = this.gameManager.drawCardsForPlayer(localPlayer.id, 1);
+        if (drawnCards.length > 0 && this.handManager) {
+            this.handManager.addCard(drawnCards[0]);
+            uiManager.addLogMessage(`마나 ${cost}을(를) 사용하여 카드를 뽑았습니다.`);
+        } else {
+            uiManager.addLogMessage('카드를 뽑지 못했습니다.');
+        }
+
+        this.setPlayerDrawCost(localPlayer.id, cost + DRAW_COST_STEP);
+        this.playersManager.updatePlayer(localPlayer);
+        this.updateDrawButtonState();
+
+        // 드로우 후 턴 종료
+        this.endTurn();
+    }
+
+    private handleServerCardDraw(result: any): void {
+        if (!this.gameManager || !result?.playerId) return;
+        const player = this.gameManager.getPlayerById(result.playerId);
+        if (!player) return;
+
+        if (typeof result.remainingMentalPower === 'number') {
+            player.mentalPower = result.remainingMentalPower;
+        }
+
+        if (result.cardDrawn) {
+            const normalized = this.normalizeServerCard(result.cardDrawn);
+            player.cards.push(normalized);
+            if (player.id === this.currentPlayerId && this.handManager) {
+                this.handManager.addCard(normalized);
+            }
+        }
+
+        if (typeof result.newDrawCost === 'number') {
+            this.setPlayerDrawCost(player.id, result.newDrawCost);
+        }
+
+        this.playersManager.updatePlayer(player);
+
+        if (result.message) {
+            uiManager.addLogMessage(result.message);
+        }
+
+        if (player.id === this.currentPlayerId) {
+            this.isDrawActionPending = false;
+        }
+
+        this.updateDrawButtonState();
+    }
+
+    private normalizeServerCard(raw: any): Card {
+        return {
+            id: raw?.id ?? `server-card-${Date.now()}`,
+            name: raw?.name ?? '알 수 없는 카드',
+            type: (raw?.type as Card['type']) ?? CardType.ATTACK,
+            healthDamage: raw?.healthDamage ?? raw?.damage ?? 0,
+            mentalDamage: raw?.mentalDamage ?? raw?.mental_atk ?? 0,
+            defense: raw?.defense ?? raw?.block ?? 0,
+            mentalCost: raw?.mentalCost ?? raw?.cost ?? 0,
+            attribute: raw?.attribute,
+            plusLevel: raw?.plusLevel ?? 0,
+            effect: (raw?.effect as CardEffect) ?? CardEffect.NONE,
+            description: raw?.description ?? ''
+        };
+    }
+
+    private initializeDrawCosts(players: Player[]): void {
+        this.playerDrawCosts.clear();
+        players.forEach(player => {
+            this.playerDrawCosts.set(player.id, DEFAULT_DRAW_COST);
+        });
+    }
+
+    private getPlayerDrawCost(playerId: string): number {
+        return this.playerDrawCosts.get(playerId) ?? DEFAULT_DRAW_COST;
+    }
+
+    private setPlayerDrawCost(playerId: string, cost: number): void {
+        this.playerDrawCosts.set(playerId, Math.max(DEFAULT_DRAW_COST, cost));
+    }
+
+    private updateDrawButtonState(): void {
+        const drawBtn = document.getElementById('draw-card-btn') as HTMLButtonElement | null;
+        if (!drawBtn) return;
+
+        if (!this.gameManager) {
+            drawBtn.disabled = true;
+            drawBtn.innerHTML = '<span class="label">마나 드로우</span><span class="cost">-</span>';
+            return;
+        }
+
+        if (this.isDrawActionPending) {
+            drawBtn.disabled = true;
+            drawBtn.innerHTML = '<span class="label">드로우 요청 중...</span><span class="cost">대기</span>';
+            return;
+        }
+
+        const localPlayer = this.gameManager.getLocalPlayer();
+        const cost = this.getPlayerDrawCost(localPlayer.id);
+        const canDraw =
+            this.gameManager.isLocalPlayerTurn() &&
+            localPlayer.isAlive &&
+            localPlayer.mentalPower >= cost &&
+            !this.pendingDefenseRequestId &&
+            !this.isLocalDefenseMode;
+
+        drawBtn.disabled = !canDraw;
+        drawBtn.innerHTML = `<span class="label">마나 드로우</span><span class="cost">-${cost} MP</span>`;
     }
 
     /**

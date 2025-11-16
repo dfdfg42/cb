@@ -38,6 +38,7 @@ export class SocketClient {
     private onDefendRequest?: (data: any) => void;
     private onAttackAnnounced?: (data: any) => void;
     private onPlayerDefend?: (data: any) => void;
+    private onCardDrawn?: (data: any) => void;
     private onTurnEnd?: (data: any) => void;
     private onTurnStart?: (data: any) => void;
     private onSpecialEvent?: (data: any) => void;
@@ -212,6 +213,16 @@ export class SocketClient {
         });
     }
 
+    // 마나를 사용한 카드 드로우
+    public sendDrawCard(playerId: string): void {
+        if (!this.socket?.connected || !this.currentRoomId) return;
+
+        this.socket.emit('player-draw-card', {
+            roomId: this.currentRoomId,
+            playerId
+        });
+    }
+
     // 턴 종료 전송
     public sendTurnEnd(playerId: string, nextPlayerId: string): void {
         if (!this.socket?.connected || !this.currentRoomId) return;
@@ -323,6 +334,11 @@ export class SocketClient {
             this.onAttackResolved?.(data);
         });
 
+        this.socket.on('card-drawn', (data) => {
+            console.log('🃏 card-drawn 수신:', data);
+            this.onCardDrawn?.(data);
+        });
+
         this.socket.on('player-defend', (data) => {
             console.log('🛡️ 방어 수신:', data);
             this.onPlayerDefend?.(data);
@@ -416,6 +432,10 @@ export class SocketClient {
 
     public setOnAttackResolved(callback: (data: any) => void): void {
         this.onAttackResolved = callback;
+    }
+
+    public setOnCardDrawn(callback: (data: any) => void): void {
+        this.onCardDrawn = callback;
     }
 
     public setOnPlayerDefend(callback: (data: any) => void): void {
