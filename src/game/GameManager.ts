@@ -4,6 +4,7 @@ import { createShuffledDeck } from '../data/cards';
 import { CombatManager } from './CombatManager';
 import { CardValidator } from './CardValidator';
 import { EventEmitter } from './EventEmitter';
+import { getSystemEventCards, getSystemEventConfig, SystemEventCard, SystemEventCategory } from '../data/systemEvents';
 
 /**
  * GameManager - 게임 흐름 제어 담당
@@ -15,12 +16,25 @@ export class GameManager {
     private uiManager: IUIManager;
     private combatManager: CombatManager;
     private eventEmitter: EventEmitter;
+    private systemEventConfig = getSystemEventConfig();
+    private systemEventCardsByCategory: Record<SystemEventCategory, SystemEventCard[]>;
+    private totalSystemEventChance: number;
 
     constructor(gameType: GameType, players: Player[], localPlayerId: string, uiManager: IUIManager) {
         this.localPlayerId = localPlayerId;
         this.uiManager = uiManager;
         this.combatManager = new CombatManager(uiManager);
         this.eventEmitter = new EventEmitter();
+        const systemEventCards = getSystemEventCards();
+        this.systemEventCardsByCategory = {
+            angel: systemEventCards.filter(card => card.category === 'angel'),
+            demon: systemEventCards.filter(card => card.category === 'demon')
+        };
+        this.totalSystemEventChance = Math.min(
+            1,
+            (this.systemEventConfig?.angelChance ?? 0) +
+            (this.systemEventConfig?.demonChance ?? 0)
+        );
         
         // 게임 세션 초기화
         this.session = {
@@ -66,7 +80,10 @@ export class GameManager {
 
     private drawCardsFromDeck(count: number): Card[] {
         const cards: Card[] = [];
-        for (let i = 0; i < count && this.session.deck.length > 0; i++) {
+        for (let i = 0; i < count; i++) {
+            if (this.session.deck.length === 0) {
+                this.session.deck = createShuffledDeck();
+            }
             const card = this.session.deck.pop();
             if (card) {
                 cards.push(card);
@@ -84,11 +101,6 @@ export class GameManager {
         // 필드 마법 효과 적용
         if (this.session.fieldMagic) {
             this.applyFieldMagicEffect();
-        }
-
-        // 50턴 이후 악마/천사 이벤트
-        if (this.session.currentTurn >= 50) {
-            this.triggerSpecialEvent();
         }
 
         this.uiManager.updateTurnNumber(this.session.currentTurn);
@@ -122,6 +134,31 @@ export class GameManager {
         this.eventEmitter.emit('turn:end', previousPlayerId, this.session.currentPlayerId);
 
         this.startTurn();
+    }
+
+    /**
+     * 플레이어에게 카드를 지급하고, 드로우 시점 시스템 이벤트를 처리한다.
+     */
+    public drawCardsForPlayer(playerId: string, count: number): Card[] {
+        const player = this.getPlayerById(playerId);
+        if (!player || count <= 0) {
+            return [];
+        }
+
+        const drawnCards: Card[] = [];
+        for (let i = 0; i < count; i++) {
+            const newCard = this.drawCardsFromDeck(1)[0];
+            if (newCard) {
+                drawnCards.push(newCard);
+            }
+            this.handleSystemEventOnDraw(player);
+        }
+
+        if (drawnCards.length > 0) {
+            player.cards.push(...drawnCards);
+        }
+
+        return drawnCards;
     }
 
     // ===========================================
@@ -284,6 +321,63 @@ export class GameManager {
         });
     }
 
+    private handleSystemEventOnDraw(triggeringPlayer: Player): void {
+        if (!this.systemEventConfig) return;
+        if (this.session.currentTurn < this.systemEventConfig.turnLimit) return;
+        if (this.totalSystemEventChance <= 0) return;
+
+        const roll = Math.random();
+        if (roll >= this.totalSystemEventChance) {
+            return;
+        }
+
+        const eventType: SystemEventCategory =
+            roll < (this.systemEventConfig.angelChance ?? 0) ? 'angel' : 'demon';
+        const pool = this.systemEventCardsByCategory[eventType] || [];
+        if (pool.length === 0) return;
+
+        const card = pool[Math.floor(Math.random() * pool.length)];
+        this.resolveSystemEventCard(card, triggeringPlayer);
+    }
+
+    private resolveSystemEventCard(card: SystemEventCard, triggeringPlayer: Player): void {
+        const target = this.getRandomAlivePlayer();
+        if (!target) return;
+
+        const triggerMessage = `⚙️ ${triggeringPlayer.name}의 드로우로 시스템 이벤트 [${card.name}] 발동!`;
+        this.uiManager.addLogMessage(triggerMessage);
+
+        if (card.category === 'angel') {
+            if (card.effect === 'hp+10') {
+                target.health = Math.min(target.maxHealth, target.health + 10);
+                this.uiManager.addLogMessage(`😇 ${target.name}이(가) 체력 10을 회복했습니다!`);
+            } else if (card.effect === 'mp+10') {
+                target.mentalPower = Math.min(target.maxMentalPower, target.mentalPower + 10);
+                this.uiManager.addLogMessage(`😇 ${target.name}이(가) 정신력을 10 회복했습니다!`);
+            } else {
+                this.uiManager.addLogMessage(`😇 ${target.name}이(가) 천사의 축복을 받았습니다.`);
+            }
+            this.eventEmitter.emit('event:angel', { card, targetId: target.id });
+            return;
+        }
+
+        if (card.id === 'EVT-DEMON-DISCARD2') {
+            const cardsToRemove = Math.min(2, target.cards.length);
+            for (let i = 0; i < cardsToRemove; i++) {
+                const removeIndex = Math.floor(Math.random() * target.cards.length);
+                target.cards.splice(removeIndex, 1);
+            }
+            this.uiManager.addLogMessage(`😈 악마가 ${target.name}의 카드 ${cardsToRemove}장을 파괴했습니다!`);
+        } else {
+            const healthDamage = Math.max(card.physicalDamage, 0);
+            const mentalDamage = Math.max(card.mentalDamage, 0);
+            this.combatManager.applyDamage(target, healthDamage, mentalDamage);
+            this.uiManager.addLogMessage(`😈 [${card.name}]이(가) ${target.name}을(를) 강타했습니다!`);
+        }
+
+        this.eventEmitter.emit('event:devil', { card, targetId: target.id });
+    }
+
     private applyFieldMagicEffect(): void {
         if (!this.session.fieldMagic) return;
 
@@ -320,67 +414,6 @@ export class GameManager {
             this.session.fieldMagic = undefined;
             this.uiManager.updateFieldMagic(null);
         }
-    }
-
-    // ===========================================
-    // 특수 이벤트 (천사/악마)
-    // ===========================================
-
-    private triggerSpecialEvent(): void {
-        const roll = Math.random();
-        
-        if (roll < 0.1) { // 10% 확률로 천사
-            this.angelEvent();
-        } else if (roll < 0.4) { // 30% 확률로 악마
-            this.devilEvent();
-        }
-    }
-
-    private devilEvent(): void {
-        const alivePlayers = this.session.players.filter(p => p.isAlive);
-        if (alivePlayers.length === 0) return;
-
-        const target = alivePlayers[Math.floor(Math.random() * alivePlayers.length)];
-        const eventRoll = Math.random();
-
-        if (eventRoll < 0.33) {
-            this.combatManager.applyDamage(target, 10, 0);
-            this.uiManager.addLogMessage(`😈 악마가 나타나 ${target.name}에게 10 데미지!`);
-        } else if (eventRoll < 0.66) {
-            this.combatManager.applyDamage(target, 20, 0);
-            this.uiManager.addLogMessage(`😈 악마가 나타나 ${target.name}에게 20 데미지!`);
-        } else if (eventRoll < 0.9) {
-            this.combatManager.applyDamage(target, 30, 0);
-            this.uiManager.addLogMessage(`😈 악마가 나타나 ${target.name}에게 30 데미지!`);
-        } else {
-            // 카드 2장 삭제
-            const cardsToRemove = Math.min(2, target.cards.length);
-            for (let i = 0; i < cardsToRemove; i++) {
-                target.cards.pop();
-            }
-            this.uiManager.addLogMessage(`😈 악마가 ${target.name}의 카드 ${cardsToRemove}장을 파괴했습니다!`);
-        }
-        
-        // 악마 이벤트 발행
-        this.eventEmitter.emit('event:devil', target);
-    }
-
-    private angelEvent(): void {
-        const alivePlayers = this.session.players.filter(p => p.isAlive);
-        if (alivePlayers.length === 0) return;
-
-        const target = alivePlayers[Math.floor(Math.random() * alivePlayers.length)];
-        
-        if (Math.random() < 0.5) {
-            target.health = Math.min(100, target.health + 10);
-            this.uiManager.addLogMessage(`😇 천사가 나타나 ${target.name}의 체력을 10 회복!`);
-        } else {
-            target.mentalPower = Math.min(target.maxMentalPower, target.mentalPower + 10);
-            this.uiManager.addLogMessage(`😇 천사가 나타나 ${target.name}의 정신력을 10 회복!`);
-        }
-        
-        // 천사 이벤트 발행
-        this.eventEmitter.emit('event:angel', target);
     }
 
     // ===========================================
@@ -447,5 +480,12 @@ export class GameManager {
 
     public getEventEmitter(): EventEmitter {
         return this.eventEmitter;
+    }
+
+    private getRandomAlivePlayer(): Player | undefined {
+        const alive = this.session.players.filter(p => p.isAlive);
+        if (alive.length === 0) return undefined;
+        const index = Math.floor(Math.random() * alive.length);
+        return alive[index];
     }
 }

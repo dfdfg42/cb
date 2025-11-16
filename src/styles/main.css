@@ -447,75 +447,6 @@ body {
     color: var(--primary-color);
 }
 
-.field-magic-area {
-    background: var(--field-magic);
-    border-radius: 8px;
-    padding: 10px;
-    text-align: center;
-    margin-bottom: 10px;
-    min-height: 40px;
-}
-
-.field-magic-label {
-    font-size: 14px;
-    font-weight: bold;
-}
-
-.combat-area {
-    display: flex;
-    gap: 10px;
-    align-items: stretch;
-    margin-bottom: 10px;
-}
-
-.attacker-area,
-.defender-area {
-    flex: 1;
-    background: var(--card-bg);
-    border-radius: 8px;
-    padding: 10px;
-}
-
-.combat-label {
-    font-size: 12px;
-    color: #aaa;
-    margin-bottom: 4px;
-}
-
-.combat-name {
-    font-size: 16px;
-    font-weight: bold;
-    margin-bottom: 8px;
-    color: var(--primary-color);
-}
-
-.cards-played {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    min-height: 60px;
-}
-
-.combat-card-mini {
-    font-size: 10px;
-    padding: 4px 8px;
-    background: var(--attack-card);
-    border-radius: 4px;
-    white-space: nowrap;
-}
-
-.combat-card-mini.defense {
-    background: var(--defense-card);
-}
-
-.vs-divider {
-    font-size: 24px;
-    font-weight: bold;
-    display: flex;
-    align-items: center;
-    color: var(--warning-color);
-}
-
 /* 데미지/힐 애니메이션 */
 @keyframes damageFloat {
     0% {
@@ -1123,14 +1054,6 @@ body {
         grid-template-columns: repeat(2, 1fr);
     }
     
-    .combat-area {
-        flex-direction: column;
-    }
-    
-    .vs-divider {
-        transform: rotate(90deg);
-        height: 30px;
-    }
 }
 
 @media (max-width: 480px) {
@@ -1166,4 +1089,52 @@ body {
 .combat-summary .summary-value.timer {
     font-size: 20px;
     color: var(--danger-color);
+}
+.combat-summary .summary-line.summary-cards-line {
+    flex-direction: column;
+}
+.combat-summary .summary-line.summary-cards-line .summary-label {
+    margin-bottom: 6px;
+}
+.cards-summary {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+.card-summary-column {
+    flex: 1;
+    min-width: 140px;
+    background: rgba(255,255,255,0.04);
+    border-radius: 6px;
+    padding: 6px;
+}
+.card-summary-title {
+    font-size: 12px;
+    color: #9aa4c2;
+    margin-bottom: 4px;
+}
+.summary-card-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    min-height: 28px;
+}
+.summary-card-chip {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.08);
+    white-space: nowrap;
+}
+.summary-card-chip.attack {
+    background: rgba(231, 76, 60, 0.85);
+}
+.summary-card-chip.defense {
+    background: rgba(52, 152, 219, 0.85);
+}
+.summary-card-chip.magic {
+    background: rgba(155, 89, 182, 0.85);
+}
+.summary-card-chip.field {
+    background: rgba(46, 204, 113, 0.85);
 }

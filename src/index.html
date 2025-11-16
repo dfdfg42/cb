@@ -82,26 +82,6 @@
             <!-- 중앙 전투 필드 -->
             <div class="battle-field">
                 <div class="turn-counter">턴: <span id="turn-number">1</span></div>
-                <div class="field-magic-area" id="field-magic-area">
-                    <span class="field-magic-label">필드 마법 없음</span>
-                </div>
-                
-                <div class="combat-area">
-                    <div class="attacker-area">
-                        <div class="combat-label">공격자</div>
-                        <div class="combat-name" id="attacker-name">-</div>
-                        <div class="cards-played" id="attacker-cards"></div>
-                    </div>
-                    
-                    <div class="vs-divider">VS</div>
-                    
-                    <div class="defender-area">
-                        <div class="combat-label">방어자</div>
-                        <div class="combat-name" id="defender-name">-</div>
-                        <div class="cards-played" id="defender-cards"></div>
-                    </div>
-                </div>
-
                 <div class="game-log" id="game-log">
                     <div class="log-message">게임이 시작되었습니다!</div>
                 </div>
@@ -109,12 +89,25 @@
                 <!-- 전투 요약 (공격자 -> 방어자, 사용 카드, 데미지, 상태이상) -->
                 <div id="combat-summary" class="combat-summary">
                     <div class="summary-line">
+                        <span class="summary-label">필드 마법</span>
+                        <span id="summary-field-magic" class="summary-value">필드 마법 없음</span>
+                    </div>
+                    <div class="summary-line">
                         <span class="summary-label">공격자 → 방어자</span>
                         <span id="summary-players" class="summary-value">- → -</span>
                     </div>
-                    <div class="summary-line">
+                    <div class="summary-line summary-cards-line">
                         <span class="summary-label">사용 카드</span>
-                        <span id="summary-cards" class="summary-value">-</span>
+                        <div class="summary-value cards-summary">
+                            <div class="card-summary-column">
+                                <div class="card-summary-title">공격</div>
+                                <div id="summary-attacker-cards" class="summary-card-list"></div>
+                            </div>
+                            <div class="card-summary-column">
+                                <div class="card-summary-title">방어</div>
+                                <div id="summary-defender-cards" class="summary-card-list"></div>
+                            </div>
+                        </div>
                     </div>
                     <div class="summary-line">
                         <span class="summary-label">데미지</span>
